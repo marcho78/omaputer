@@ -13,4 +13,7 @@ bool attachPartition(const String &from, String to);
 
 void partitionCrawler();
 
+// Shows `message` with Confirm/Cancel options; true if the user confirmed.
+bool confirmAction(const String &message);
+
 #endif /*__PARTITIONER_H*/

@@ -281,6 +281,19 @@ void checkReboot() {}
 int getBattery() { return 76; } // A plausible level, so previews show the battery gauge.
 bool isCharging() { return false; }
 
+// partitioner.cpp isn't compiled here; this mirrors its confirmAction() so the real
+// Confirm/Cancel dialog shows (used by formatSdCard()).
+bool confirmAction(const String &message) {
+    bool confirmed = false;
+    std::vector<Option> confirmOptions = {
+        {"Confirm", [&]() { confirmed = true; } },
+        {"Cancel",  [&]() { confirmed = false; }},
+    };
+    displayRedStripe(message);
+    loopOptions(confirmOptions);
+    return confirmed;
+}
+
 // ---------------------------------------------------------------------------
 // Low-level stubs for sd_functions.cpp's install/backup/partition-table code
 // paths — reachable only by actually flashing a selected file, not by

@@ -9,6 +9,7 @@
 #include "mykeyboard.h"
 #include "partition_install_layout.h"
 #include "partition_table_model.h"
+#include "partitioner.h"
 #include "ram_profile.h"
 #include "settings.h"
 #include "utils.h"
@@ -78,6 +79,35 @@ bool setupSdCard() {
         sdcardMounted = true;
         return true;
     }
+}
+
+/***************************************************************************************
+** Function name: formatSdCard
+** Description:   formats an SD card that has no readable FAT filesystem: a new card, or
+**                one formatted NTFS, for a Mac or with a GPT table. The SD library only
+**                formats when mounting finds no filesystem, so a readable card is never
+**                wiped; it is reported as readable instead.
+***************************************************************************************/
+bool formatSdCard() {
+#if defined(DISABLE_SDCARD_ICON) || !defined(SDM_SD) || defined(HEADLESS)
+    displayError("Not available on this device");
+    return false;
+#else
+    if (setupSdCard()) {
+        displayMsg("SD card is readable, nothing to format");
+        return true;
+    }
+    if (!confirmAction("Format SD card? All data is erased.")) return false;
+    displayRedStripe("Formatting SD card...");
+    SDM.end();
+    const bool sdOnTftBus = (_mosi == displayConfig.mosi && displayConfig.mosi >= 0);
+    // Same bus and defaults as setupSdCard(), with format_if_empty set.
+    sdcardMounted = sdOnTftBus ? SDM.begin(_cs, SPI, 4000000, "/sd", 5, true)
+                               : SDM.begin(_cs, sdcardSPI, 4000000, "/sd", 5, true);
+    launcherConsolePrintln(sdcardMounted ? "SD card formatted" : "SD card format failed");
+    displayMsg(sdcardMounted ? "SD card formatted" : "Format failed: check the card");
+    return sdcardMounted;
+#endif
 }
 
 /***************************************************************************************

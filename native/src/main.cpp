@@ -43,6 +43,7 @@
 // ---------------------------------------------------------------------------
 HardwareSerial Serial;
 SDClass SD;
+SPIClass SPI;
 FFatFS FFat;
 SPIFFSFS SPIFFS;
 

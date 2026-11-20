@@ -15,6 +15,10 @@ extern SPIClass sdcardSPI;
 
 bool setupSdCard();
 
+// Formats an SD card that has no readable filesystem, after asking. Returns true when a
+// readable card is mounted afterwards.
+bool formatSdCard();
+
 bool deleteFromSd(const String &path);
 
 bool renameFile(const String &path, const String &filename);

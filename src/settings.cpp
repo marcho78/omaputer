@@ -758,6 +758,7 @@ void settings_menu() {
                                    releaseHeapObjectsAndReboot();
                                }});
         }
+        options.push_back({"Format SD Card", [=]() { formatSdCard(); }});
         options.push_back({"Reset Configs/Wifi", factoryReset});
         options.push_back({"Restart", [=]() { return (void)releaseHeapObjectsAndReboot(); }});
         options.push_back({"Turn-off", [=]() { powerOff(); }});

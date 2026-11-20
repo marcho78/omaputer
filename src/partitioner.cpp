@@ -47,17 +47,6 @@ uint32_t partitionAlignment(uint8_t type, uint8_t subtype = 0xFF) {
     return launcherPartitionAlignment(type, subtype);
 }
 
-bool confirmAction(const String &message) {
-    bool confirmed = false;
-    std::vector<Option> confirmOptions = {
-        {"Confirm", [&]() { confirmed = true; } },
-        {"Cancel",  [&]() { confirmed = false; }},
-    };
-    displayRedStripe(message);
-    loopOptions(confirmOptions);
-    return confirmed;
-}
-
 String nextOtaAppLabel(const LauncherPartitionTable &table) {
     int highest = 0;
     for (const LauncherPartitionEntry &entry : table.entries) {
@@ -756,6 +745,18 @@ bool applyPartitionChanges(const LauncherPartitionTable &table) {
     return releaseHeapObjectsAndReboot();
 }
 } // namespace
+
+// Public (declared in partitioner.h) so other screens can ask for confirmation too.
+bool confirmAction(const String &message) {
+    bool confirmed = false;
+    std::vector<Option> confirmOptions = {
+        {"Confirm", [&]() { confirmed = true; } },
+        {"Cancel",  [&]() { confirmed = false; }},
+    };
+    displayRedStripe(message);
+    loopOptions(confirmOptions);
+    return confirmed;
+}
 
 void partList() {
     RAM_LOG("partList-start");
