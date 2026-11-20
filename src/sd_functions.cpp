@@ -224,11 +224,23 @@ bool createFolder(String path) {
 }
 
 /***************************************************************************************
+** Function name: sdFolderColor
+** Description:   folders are told apart from files by their colour. Omarchy's terminal
+**                shows directories in the theme's blue (#20b8ff); if the accent or text
+**                colour is set to that same blue, fall back to upstream's derived colour.
+***************************************************************************************/
+static uint16_t sdFolderColor() {
+    const uint16_t omarchyBlue = 0x25DF; // #20b8ff
+    if (omarchyBlue != FGCOLOR && omarchyBlue != ALCOLOR) return omarchyBlue;
+    return uint16_t(FGCOLOR - 0x1111);
+}
+
+/***************************************************************************************
 ** Function name: sortList
 ** Description:   sort files/folders by name
 ***************************************************************************************/
 bool sortList(const Option &a, const Option &b) {
-    const uint16_t _folderColor = uint16_t(FGCOLOR - 0x1111);
+    const uint16_t _folderColor = sdFolderColor();
     bool _a = (a.color == _folderColor); // is folder
     bool _b = (b.color == _folderColor); // is folder
     if (_a != _b) {
@@ -269,7 +281,7 @@ void readFs(String &folder, std::vector<Option> &opt) {
         if (fullPath == "") { break; }
         // Serial.printf("Path: %s (isDir: %d)\n", fullPath.c_str(), isDir);
 
-        uint16_t color = FGCOLOR - 0x1111;
+        uint16_t color = sdFolderColor();
 
         if (noDotFiles && nameOnly.startsWith(".")) { continue; }
 
@@ -363,7 +375,7 @@ RESTART:
     // First Exit
     if (index < 0) goto BACK_FOLDER;
     // Check if it is Folder or operator (> Back)
-    if (options[index].color == uint16_t(FGCOLOR - 0x1111)) isFolder = true;
+    if (options[index].color == sdFolderColor()) isFolder = true;
     else isFolder = false;
     if (options[index].color == uint16_t(ALCOLOR)) isOperator = true;
     else isOperator = false;

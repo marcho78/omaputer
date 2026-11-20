@@ -5,6 +5,7 @@
 
 typedef int gpio_num_t;
 #define GPIO_NUM_NC -1
+#define GPIO_NUM_MAX 49 // ESP32-S3; settings.cpp lists pins up to this
 
 enum gpio_mode_t { GPIO_MODE_INPUT, GPIO_MODE_OUTPUT };
 enum gpio_pull_mode_t { GPIO_PULLUP_ONLY, GPIO_PULLDOWN_ONLY, GPIO_FLOATING };

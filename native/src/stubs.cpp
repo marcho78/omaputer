@@ -278,7 +278,8 @@ void launcherConsoleEnd() {}
 void powerOff() {}
 void reboot() {}
 void checkReboot() {}
-int getBattery() { return 0; }
+int getBattery() { return 76; } // A plausible level, so previews show the battery gauge.
+bool isCharging() { return false; }
 
 // ---------------------------------------------------------------------------
 // Low-level stubs for sd_functions.cpp's install/backup/partition-table code

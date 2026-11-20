@@ -4,6 +4,7 @@
 #include "idf/idf_wifi.h"
 #include "idf/launcher_platform.h"
 #include "mykeyboard.h"
+#include "omarchy_ui.h"
 #include "onlineLauncher.h"
 #include "powerSave.h"
 #include "ram_profile.h"
@@ -44,8 +45,12 @@ void displayScrollingText(const String &text, Opt_Coord &coord) {
         String scrollingPart =
             displayText.substring(i, i + (coord.size - 1)); // Display charLimit characters at a time
         tft->fillRect(
-            coord.x, coord.y, (coord.size - 1) * LW * tft->getTextSize(), LH * tft->getTextSize(), BGCOLOR
-        ); // Clear display area
+            coord.x,
+            coord.y,
+            (coord.size - 1) * LW * tft->getTextSize(),
+            LH * tft->getTextSize(),
+            coord.bgcolor
+        ); // Clear display area (the selected row has its own background)
         tft->setCursor(coord.x, coord.y);
         tft->setCursor(coord.x, coord.y);
         tft->print(scrollingPart);
@@ -233,10 +238,11 @@ void TouchFooter2(uint16_t color) {
 ***************************************************************************************/
 void initDisplay(bool doAll) {
 #ifndef HEADLESS
+    // Credit shown in the corner, as on upstream's bootscreen.
     static uint8_t _name = launcherRandom(0, 3);
     String name = "@Pirata";
-    String txt;
-    int cor, _x, _y, show;
+    if (_name == 1) name = "u/bmorcelli";
+    else if (_name == 2) name = "gh/bmorcelli";
 
 #ifdef E_PAPER_DISPLAY // epaper display draws only once
     static bool runOnce = false;
@@ -247,122 +253,54 @@ void initDisplay(bool doAll) {
     runOnce = true;
 
 #endif
-
-    if (_name == 1) name = "u/bmorcelli";
-    else if (_name == 2) name = "gh/bmorcelli";
-    tft->drawRoundRect(3, 3, tftWidth - 6, tftHeight - 6, 5, FGCOLOR);
-
-    int matrixTopMargin = 10;
+    // Omarchy bootscreen: a full-screen window with the OMARCHY wordmark and a blinking
+    // cursor after "launcher". The first call draws it; later calls only blink the cursor.
+    static int cursorX = 0;
+    static int cursorY = 0;
+    static bool cursorOn = false;
+    static uint32_t lastBlink = 0;
+    const int lineH = LH * _fp;
+    if (doAll) {
+        omarchy::frame(0, 0, tftWidth, tftHeight);
+        int top = 6;
 #if defined(HAS_TOUCH) || defined(HAS_KEYBOARD) || defined(USE_CARDKB2)
-    std::vector<MenuOptions> &bootAppShortcuts = launcherBootAppShortcuts();
-    if (!bootAppShortcuts.empty()) matrixTopMargin = drawBootAppShortcuts(bootAppShortcuts) + 2;
+        std::vector<MenuOptions> &bootAppShortcuts = launcherBootAppShortcuts();
+        if (!bootAppShortcuts.empty()) top = drawBootAppShortcuts(bootAppShortcuts) + 4;
 #endif
+        int scale = (tftWidth - 16) / omarchy::kWordmarkWidth;
+        if (scale < 1) scale = 1;
+        if (scale > 4) scale = 4;
+        String selectedAppName = launcherSelectedBootAppName();
+        const int logoH = omarchy::kWordmarkHeight * scale;
+        const int blockH = logoH + 6 + lineH + (selectedAppName.isEmpty() ? 0 : lineH + 4);
+        int y = top + (tftHeight - 6 - lineH - top - blockH) / 2;
+        if (y < top) y = top;
+        omarchy::wordmark(tftWidth / 2, y, scale);
+        y += logoH + 6;
 
-    tft->setTextSize(_fp);
-    tft->setCursor(10, matrixTopMargin);
-    cor = 0;
-    show = launcherRandom(0, 40);
-    _x = tft->getCursorX();
-    _y = tft->getCursorY();
-
-#if defined(E_PAPER_DISPLAY)
-    // On e-paper, printing one character at a time (doAll fills every cell) is far more
-    // draw calls than the panel needs — the per-character odd/even colour is not worth it
-    // here anyway, so accumulate each row and push it as a single string.
-    bool batchRow = doAll;
-    String rowBuffer;
-    int rowBufferY = _y;
-#endif
-
-    while (tft->getCursorY() < (tftHeight - (LH + 4))) {
-        cor = launcherRandom(0, 11);
         tft->setTextSize(_fp);
-        show = launcherRandom(0, 40);
-        if (show == 0 || doAll) {
-            if (cor == 10) {
-                txt = " ";
-            } else if (cor & 1) {
-                tft->setTextColor(odd_color, BGCOLOR);
-                txt = String(cor);
-            } else {
-                tft->setTextColor(even_color, BGCOLOR);
-                txt = String(cor);
-            }
+        tft->setTextColor(ALCOLOR, BGCOLOR);
+        const String label = "launcher";
+        const int labelW = tft->textWidth(label, 1);
+        const int labelX = (tftWidth - labelW - LW * _fp) / 2;
+        tft->drawString(label, labelX, y);
+        cursorX = labelX + labelW + 1;
+        cursorY = y;
+        cursorOn = false;
+        lastBlink = 0;
 
-            if (_x >= (tftWidth - (LW * _fp + 4))) {
-#if defined(E_PAPER_DISPLAY)
-                if (batchRow && rowBuffer.length() > 0) {
-                    tft->setTextColor(FGCOLOR, BGCOLOR);
-                    tft->drawString(rowBuffer, 10, rowBufferY);
-                    rowBuffer = "";
-                }
-#endif
-                _x = 10;
-                _y += LH * _fp;
-#if defined(E_PAPER_DISPLAY)
-                rowBufferY = _y;
-#endif
-            } else if (_x < 10) {
-                _x = 10;
-            }
-            if (_y >= (tftHeight - (LH * _fp + LH * _fp / 2))) break;
-            tft->setCursor(_x, _y);
-            if (_y > (tftHeight - (LH * _fm + LH * _fp / 2)) &&
-                _x >= (tftWidth - ((LW * _fp + 4) + LW * _fp * name.length()))) {
-#if defined(E_PAPER_DISPLAY)
-                if (batchRow) rowBuffer += name;
-                else
-#endif
-                {
-                    tft->setTextColor(FGCOLOR);
-                    tft->print(name);
-                }
-                _x += LW * _fp * name.length();
-            } else {
-#if defined(E_PAPER_DISPLAY)
-                if (batchRow) rowBuffer += txt;
-                else
-#endif
-                    tft->print(txt);
-                _x += LW * _fp;
-            }
-        } else {
-            if (_y > (tftHeight - (LH * _fm + LH * _fp / 2)) &&
-                _x >= (tftWidth - ((LW * _fp + 4) + LW * _fp * name.length())))
-                _x += LW * _fp * name.length();
-            else _x += LW * _fp;
-
-            if (_x >= (tftWidth - (LW * _fp + 4))) {
-                _x = 10;
-                _y += LH * _fp;
-                ALIVIATE_TASK;
-            }
+        if (!selectedAppName.isEmpty()) {
+            selectedAppName = selectedAppName.substring(0, tftWidth / (LW * _fp) - 4);
+            tft->setTextColor(FGCOLOR, BGCOLOR);
+            tft->drawCentreString(selectedAppName, tftWidth / 2, y + lineH + 4, 1);
         }
-        tft->setCursor(_x, _y);
+        tft->setTextColor(omarchy::mutedText(), BGCOLOR);
+        tft->drawRightString(name, tftWidth - 6, tftHeight - 4 - lineH, 1);
     }
-#if defined(E_PAPER_DISPLAY)
-    if (batchRow && rowBuffer.length() > 0) {
-        tft->setTextColor(FGCOLOR, BGCOLOR);
-        tft->drawString(rowBuffer, 10, rowBufferY);
-    }
-#endif
-    tft->setTextSize(_fg);
-
-    const String title = "Launcher";
-    const int32_t titleX = (tftWidth - tft->textWidth(title, 1)) / 2;
-
-    drawOutlinedText(title, titleX, tftHeight / 2 - 10, FGCOLOR, BGCOLOR, 3);
-
-    tft->setTextSize(_fg);
-    tft->setTextColor(FGCOLOR);
-
-    String selectedAppName = launcherSelectedBootAppName();
-    if (!selectedAppName.isEmpty()) {
-        selectedAppName = selectedAppName.substring(0, tftWidth / (_fm * LW) - 4);
-        tft->setTextSize(_fm);
-        tft->setTextColor(FGCOLOR, BGCOLOR);
-        int appTextY = tftHeight - (1.5 * (_fm * LH) + 10);
-        tft->drawCentreString(" " + selectedAppName + " ", tftWidth / 2, appTextY, 1);
+    if (launcherMillis() - lastBlink >= 500) {
+        lastBlink = launcherMillis();
+        cursorOn = !cursorOn;
+        tft->fillRect(cursorX, cursorY, LW * _fp - 1, lineH, cursorOn ? FGCOLOR : BGCOLOR);
     }
 
     if (doAll) TouchFooter2();
@@ -395,8 +333,8 @@ void displayCurrentVersion(
 ) {
     // tft->fillScreen(BGCOLOR);
     tft->fillRect(0, tftHeight - 5, tftWidth, 5, BGCOLOR);
-    tft->drawRoundRect(5, 5, tftWidth - 10, tftHeight - 10, 5, FGCOLOR);
-    tft->fillRoundRect(6, 6, tftWidth - 12, tftHeight - 12, 5, BGCOLOR);
+    tft->fillRect(5, 5, tftWidth - 10, tftHeight - 10, BGCOLOR);
+    omarchy::frame(5, 5, tftWidth - 10, tftHeight - 10); // Omarchy window
 
     setTftDisplay(10, 10, ~BGCOLOR, _fm, BGCOLOR);
     String name2 = String(name);
@@ -428,9 +366,9 @@ void displayCurrentVersion(
 
     setTftDisplay(-1, -1, ALCOLOR, _fm, BGCOLOR);
     tft->drawCentreString("Options", tftWidth / 2, tftHeight - (10 + _fm * 9), 1);
-    tft->drawRoundRect(
-        tftWidth / 2 - 3 * _fm * 11, tftHeight - (12 + _fm * 9), _fm * 6 * 11, _fm * 8 + 3, 3, ALCOLOR
-    );
+    omarchy::frame(
+        tftWidth / 2 - 3 * _fm * 11, tftHeight - (12 + _fm * 9), _fm * 6 * 11, _fm * 8 + 3, 1, 110
+    ); // Faint Omarchy border
 
     int div = versions.size();
     if (div == 0) div = 1;
@@ -525,8 +463,10 @@ void displayRedStripe(const String &text, uint16_t fgcolor, uint16_t bgcolor, bo
     int rectY = tftHeight / 2 - rectH / 2;
     if (rectY < 0) rectY = 0;
 
-    tft->fillRoundRect(rectX, rectY, rectW, rectH, 7, bgcolor);
-    tft->setTextColor(fgcolor, bgcolor);
+    // Omarchy notification: background colour inside the active-border gradient.
+    tft->fillRect(rectX, rectY, rectW, rectH, BGCOLOR);
+    omarchy::frame(rectX, rectY, rectW, rectH);
+    tft->setTextColor(ALCOLOR, BGCOLOR);
     tft->setTextSize(size);
 
     int visibleLines = (rectH - 2 * paddingY) / lineHeight;
@@ -588,15 +528,16 @@ void progressHandler(size_t progress, size_t total) {
         lastProgressDraw = launcherMillis();
         lastProgressBarWidth = 0;
         tft->drawPixel(0, 0, 0);
-        tft->setTextSize(_fm);
-        tft->setTextColor(ALCOLOR);
-        tft->fillRoundRect(6, 6, tftWidth - 12, tftHeight - 12, 5, BGCOLOR);
-        tft->drawCentreString("-=Launcher=-", tftWidth / 2, panelHeight() > 200 ? 20 : 10, 1);
-        tft->drawRoundRect(5, 5, tftWidth - 10, tftHeight - 10, 5, FGCOLOR);
-        if (prog_handler == 1) {
-            tft->drawRect(18, tftHeight - 28, tftWidth - 36, 17, ALCOLOR);
-            tft->fillRect(20, tftHeight - 26, tftWidth - 40, 13, BGCOLOR);
-        } else tft->drawRect(18, tftHeight - 47, tftWidth - 36, 17, FGCOLOR);
+        // Omarchy: a full-screen window, the stage as a notification, and a progress bar
+        // with a tinted track and an accent fill.
+        tft->fillRect(2, 2, tftWidth - 4, tftHeight - 4, BGCOLOR);
+        omarchy::frame(0, 0, tftWidth, tftHeight);
+        tft->setTextSize(_fp);
+        tft->setTextColor(omarchy::mutedText(), BGCOLOR);
+        tft->drawCentreString("launcher", tftWidth / 2, panelHeight() > 200 ? 20 : 8, 1);
+        const int barY = prog_handler == 1 ? tftHeight - 28 : tftHeight - 47;
+        omarchy::frame(18, barY, tftWidth - 36, 17, 1, 110);
+        tft->fillRect(20, barY + 2, tftWidth - 40, 13, omarchy::selectionFill());
 
         String txt;
         switch (prog_handler) {
@@ -616,8 +557,7 @@ void progressHandler(size_t progress, size_t total) {
         lastProgressBarWidth = barWidth;
     }
     tft->drawPixel(0, 0, 0);
-    if (prog_handler == 1) tft->fillRect(20, tftHeight - 26, barWidth, 13, ALCOLOR);
-    else tft->fillRect(20, tftHeight - 45, barWidth, 13, FGCOLOR);
+    tft->fillRect(20, (prog_handler == 1 ? tftHeight - 28 : tftHeight - 47) + 2, barWidth, 13, FGCOLOR);
 
 #if defined(E_PAPER_DISPLAY)
     if (launcherMillis() - lastUpdate > 2000) {
@@ -816,12 +756,13 @@ Opt_Coord drawOptions(
     tft->setTextSize(_fm);
 
     if (!partialRedraw) {
+        // Omarchy menu card, or a full-screen window, inside the active-border gradient.
         if (border) {
-            if (firstItemSelected) tft->fillRoundRect(boxX, boxY, contentWidth, contentHeight, 5, bgcolor);
-            tft->drawRoundRect(boxX, boxY, contentWidth, contentHeight, 5, fgcolor);
+            if (firstItemSelected) tft->fillRect(boxX, boxY, contentWidth, contentHeight, bgcolor);
+            omarchy::frame(boxX, boxY, contentWidth, contentHeight);
         } else {
-            if (firstItemSelected) tft->fillRoundRect(3, 3, tftWidth - 6, tftHeight - 6, 5, bgcolor);
-            tft->drawRoundRect(2, 2, tftWidth - 4, tftHeight - 4, 5, fgcolor);
+            if (firstItemSelected) tft->fillRect(2, 2, tftWidth - 4, tftHeight - 4, bgcolor);
+            omarchy::frame(0, 0, tftWidth, tftHeight);
         }
     }
 
@@ -875,11 +816,12 @@ Opt_Coord drawOptions(
         }
 #endif
 
-        char indicatorChar = (optionIndex == index) ? '>' : ' ';
+        // Omarchy menu row: no caret; the selected row is tinted, outlined and in accent.
+        const bool selected = optionIndex == index;
+        const uint16_t rowBg = selected ? omarchy::selectionFill() : bgcolor;
         if (rowNeedsPaint) {
-            tft->setCursor(cursorX, rowTop);
-            tft->setTextColor(fgcolor, bgcolor);
-            tft->print(indicatorChar);
+            tft->fillRect(rowLeft - 2, rowTop - 2, lineWidth + 4, lineHeight + 4, bgcolor);
+            if (selected) omarchy::selection(rowLeft - 2, rowTop - 2, lineWidth + 4, lineHeight + 4);
         }
         prefixWidth += indicatorWidth;
         cursorX += indicatorWidth;
@@ -926,7 +868,7 @@ Opt_Coord drawOptions(
 
         if (rowNeedsPaint) {
             tft->setCursor(labelX, rowTop);
-            tft->setTextColor(color, bgcolor);
+            tft->setTextColor(selected ? FGCOLOR : color, rowBg);
             tft->print(txt);
         }
 
@@ -938,8 +880,8 @@ Opt_Coord drawOptions(
             coord.x = labelX;
             coord.y = rowTop;
             coord.size = labelCharLimit;
-            coord.fgcolor = color;
-            coord.bgcolor = bgcolor;
+            coord.fgcolor = FGCOLOR;
+            coord.bgcolor = rowBg;
         }
 
         rowIndex++;
@@ -971,138 +913,92 @@ Opt_Coord drawOptions(
 ** Function name: drawMainMenu
 ** Description:   Função para desenhar e mostrar o menu principal
 ***************************************************************************************/
-void drawMainMenu(std::vector<MenuOptions> &opt, int index, bool forceFullRedraw) {
-    // Remembers which item was drawn as selected last time, so a plain selection move only
-    // has to erase the old highlight and paint the new one instead of repainting every icon.
-    // The grid layout (position/size per item) never changes between calls in the same
-    // session, so all other icons stay pixel-identical and don't need to be touched.
-    static int lastIndex = -1;
+// One main menu row in the Omarchy menu style: icon and label, the selected row tinted.
+static void drawMainMenuRow(MenuOptions &o, int x, int y, int w, int h, bool selected) {
+    tft->fillRect(x, y, w, h, BGCOLOR);
+    if (selected) omarchy::selection(x, y, w, h);
+    const uint16_t bg = selected ? omarchy::selectionFill() : BGCOLOR;
+    const uint16_t fg = !o.active ? omarchy::inactiveText() : selected ? FGCOLOR : ALCOLOR;
+    const int scale = h >= 18 ? 2 : 1;
+    const int iconSize = 8 * scale;
+    omarchy::menuIcon(o.name, x + 5, y + (h - iconSize) / 2, fg, scale);
+    String label = omarchy::menuLabel(o.name);
+    if (label.isEmpty()) label = o.text; // Installed apps show their name.
+    const int textX = x + 5 + iconSize + 7;
+    const int maxChars = (x + w - 4 - textX) / (LW * _fm);
+    if (static_cast<int>(label.length()) > maxChars) label = label.substring(0, maxChars);
+    tft->setTextSize(_fm);
+    tft->setTextColor(fg, bg);
+    tft->drawString(label, textX, y + (h - LH * _fm) / 2);
+}
 
-    uint8_t size = opt.size();
+void drawMainMenu(std::vector<MenuOptions> &opt, int index, bool forceFullRedraw) {
+    // Omarchy restyle: a one-column list in a window under the top bar, like the Omarchy
+    // menu, with the selected item's description in the bar. The last selection and
+    // scroll position are kept so a move only repaints the two rows that changed.
+    static int lastIndex = -1;
+    static int lastFirst = -1;
+
+    const int size = opt.size();
     if (size < 1) {
         displayRedStripe("No options available");
         return;
     }
-    bool compactOneLine = tftHeight <= 90;
-    int cols = compactOneLine ? 5 : 3; // Number of columns based on height
-    int visibleItems = compactOneLine && size > cols ? cols : size;
-    int rows = compactOneLine ? 1 : (size + cols - 1) / cols;             // Calculate rows needed
-    int w = (tftWidth - 16) / cols;                                       // Width of each icon
-    int h = (tftHeight - ((6 + 6 + _fp * LH + 6) + LH * _fp + 6)) / rows; // Height of each icon
+    const int winY = omarchy::kBarHeight + 1;
+    const int rowH = 18;
+    const int left = 5;
+    const int innerTop = winY + 3;
+    const int innerBottom = tftHeight - 4;
+    int visible = (innerBottom - innerTop) / rowH;
+    if (visible < 1) visible = 1;
+    if (visible > size) visible = size;
 
-    int maxIconTextSize = tftHeight <= 135 ? _fm : _fg;
+    int first = (lastFirst < 0 || lastFirst >= size) ? 0 : lastFirst;
+    if (index < first) first = index;
+    if (index >= first + visible) first = index - visible + 1;
+    if (first > size - visible) first = size - visible;
+    const bool scrollbar = size > visible;
+    const int rowW = tftWidth - 2 * left - (scrollbar ? 4 : 0);
+    const int top = innerTop + (innerBottom - innerTop - visible * rowH) / 2;
 
-    // The carousel (compact one-line) layout reassigns every slot's item on each move, so it
-    // always needs a full repaint; the fixed grid can be updated incrementally.
-    bool fullRedraw =
-        forceFullRedraw || compactOneLine || lastIndex < 0 || lastIndex >= static_cast<int>(size);
-    int prevIndex = lastIndex;
+    const bool fullRedraw = forceFullRedraw || first != lastFirst || lastIndex < 0 || lastIndex >= size;
+    const int prevIndex = lastIndex;
     lastIndex = index;
+    lastFirst = first;
 
-    for (int i = 0; i < size; ++i) opt[i].resetCoords();
-
-    for (int slot = 0; slot < visibleItems; ++slot) {
-        ALIVIATE_TASK;
-        int i = slot;
-        if (compactOneLine && size > cols) {
-            int centerSlot = cols / 2;
-            i = (index + slot - centerSlot + size) % size;
-        }
-
-        int col = slot % cols;
-        int row = compactOneLine ? 0 : slot / cols;
-        int y = (6 + 6 + _fp * LH + 8) + row * h;
-        int xOffset = 0;
-
-        // Última linha incompleta: centralizar
-        if (!compactOneLine && row == rows - 1 && (size % cols) != 0 && (size % cols) < cols) {
-            int itemsInLastRow = size % cols;
-            int totalWidthUsed = itemsInLastRow * w;
-            xOffset = ((tftWidth - 16) - totalWidthUsed) / 2;
-        }
-
-        int x = 8 + xOffset + col * w;
-
-        opt[i].x = x;
-        opt[i].y = y;
-        opt[i].w = w;
-        opt[i].h = h;
-        // Serial.printf("Menu Name: %s, x=%d, y=%d, w=%d, h=%d\n", opt[i].name, opt[i].x, opt[i].y, opt[i].w,
-        // opt[i].h); // Debug purpose
-
-        if (!fullRedraw && i != index && i != prevIndex) continue;
-
-#if defined(STICKY_MONOCHROME)
-        uint16_t itemColor = BLACK;
-        uint16_t selectedColor = BLACK;
-#else
-        uint16_t itemColor = opt[i].active ? opt[i].color : DARKGREY;
-        uint16_t selectedColor = opt[i].active ? opt[i].color : LIGHTGREY;
-#endif
-        int f_size = maxIconTextSize;
-        const int textLimit = w - 10;
-        tft->setTextSize(f_size);
-        if (static_cast<int>(opt[i].name.length()) * LW * f_size > textLimit && f_size > _fm) {
-            f_size = _fm;
-            tft->setTextSize(f_size);
-        }
-        if (static_cast<int>(opt[i].name.length()) * LW * f_size > textLimit && f_size > _fp) {
-            f_size = _fp;
-            tft->setTextSize(f_size);
-        }
-
-        if (i == index) {
-            // Selected item
-            tft->fillRoundRect(x + 6, y + 6, w - 6, h - 6, 5, DARKGREY);
-            tft->fillRoundRect(x, y, w - 6, h - 6, 5, selectedColor);
-            tft->setTextColor(BGCOLOR, selectedColor);
-            // Draw text in the center of the icon
-            tft->drawCentreString(opt[i].name, x + (w - 6) / 2, y + (h - 6) / 2 - LH * f_size / 2, 1);
-        } else {
-            int drawX = x;
-            int drawY = y;
-            int drawW = w;
-            int drawH = h;
-            if (compactOneLine) {
-                int insetY = h > 20 ? 4 : 2;
-                tft->fillRoundRect(x, y, w, h, 5, BGCOLOR);
-                drawY += insetY;
-                drawH -= 2 * insetY;
-                if (drawH < 8) {
-                    drawY = y;
-                    drawH = h;
-                }
-            }
-            // Clear residue from previous selected state: top-left (button) and bottom-right (shadow)
-            tft->fillRect(x, y, 4, 4, BGCOLOR);
-            tft->fillRect(x + w - 4, y + h - 4, 4, 4, BGCOLOR);
-            // Non-selected item
-            tft->drawRoundRect(drawX, drawY, drawW, drawH, 5, BGCOLOR);
-            tft->drawRoundRect(drawX + 1, drawY + 1, drawW - 2, drawH - 2, 5, BGCOLOR);
-            tft->drawRoundRect(drawX + 2, drawY + 2, drawW - 4, drawH - 4, 5, BGCOLOR);
-            tft->fillRoundRect(drawX + 3, drawY + 3, drawW - 6, drawH - 6, 5, BGCOLOR);
-            tft->drawRoundRect(drawX + 3, drawY + 3, drawW - 6, drawH - 6, 5, itemColor);
-            tft->setTextColor(itemColor, BGCOLOR);
-            // Draw text in the center of the icon
-            tft->drawCentreString(opt[i].name, drawX + drawW / 2, drawY + drawH / 2 - LH * f_size / 2, 1);
-        }
-        // tft->drawRect(opt[i].x,opt[i].y,opt[i].w,opt[i].h,BLUE); // debug purpose
-    }
-
-    tft->setTextSize(_fp);
-    tft->setTextColor(FGCOLOR, BGCOLOR);
-    // Draw the description of the selected item (always changes with the selection)
-    tft->fillRect(10, tftHeight - (6 + LH * _fp), tftWidth - 20, LH * _fp, BGCOLOR);
-    tft->drawCentreString(opt[index].text, tftWidth / 2, tftHeight - (6 + LH * _fp), 1);
     if (fullRedraw) {
-        // Draw Launcher version and battery value
-        // Short panels have no room for the version next to the battery gauge.
-        if (panelHeight() < 200) tft->drawString("Launcher", 12 + RES, 12);
-        else tft->drawString("Launcher " + String(LAUNCHER), 12 + RES, 12);
-        tft->setTextSize(maxIconTextSize);
+        tft->fillScreen(BGCOLOR);
         drawDeviceBorder();
-        TouchFooter();
     }
+    for (int i = 0; i < size; ++i) opt[i].resetCoords();
+    for (int slot = 0; slot < visible; ++slot) {
+        ALIVIATE_TASK;
+        const int i = first + slot;
+        const int y = top + slot * rowH;
+        opt[i].setCoords(left, y, rowW, rowH);
+        if (!fullRedraw && i != index && i != prevIndex) continue;
+        drawMainMenuRow(opt[i], left, y, rowW, rowH, i == index);
+    }
+    if (scrollbar) {
+        const int trackX = tftWidth - left - 2;
+        const int trackH = visible * rowH;
+        const int thumbH = trackH * visible / size;
+        tft->fillRect(trackX, top, 2, trackH, omarchy::selectionFill());
+        tft->fillRect(
+            trackX, top + (trackH - thumbH) * first / (size - visible), 2, thumbH, omarchy::mutedText()
+        );
+    }
+
+    // The selected item's description, in the bar between the logo and the status icons.
+    const int textW = tftWidth - omarchy::kBarTextX - 62;
+    tft->fillRect(omarchy::kBarTextX, 0, textW, omarchy::kBarHeight, BGCOLOR);
+    String desc = opt[index].text;
+    const int maxChars = textW / (LW * _fp);
+    if (static_cast<int>(desc.length()) > maxChars) desc = desc.substring(0, maxChars);
+    tft->setTextSize(_fp);
+    tft->setTextColor(ALCOLOR, BGCOLOR);
+    tft->drawString(desc, omarchy::kBarTextX, (omarchy::kBarHeight - LH * _fp) / 2 + 1);
+
     drawStatusIcons(fullRedraw);
     tft->display(false);
 }
@@ -1194,19 +1090,18 @@ int drawBootAppShortcuts(std::vector<MenuOptions> &opt) {
         int by = y + row * (boxH + 2);
         opt[i].setCoords(x, by, boxW - 2, boxH);
 
-        // tft->fillRoundRect(x, by, boxW - 2, boxH, 3, BGCOLOR);
-        tft->drawRoundRect(x, by, boxW - 2, boxH, 3, FGCOLOR);
+        omarchy::frame(x, by, boxW - 2, boxH, 1, 110); // Faint Omarchy border
 
         String name = opt[i].name;
         if (static_cast<int>(name.length()) > maxNameChars) name = name.substring(0, maxNameChars);
         tft->setTextSize(_fm);
-        tft->setTextColor(FGCOLOR, BGCOLOR);
+        tft->setTextColor(ALCOLOR, BGCOLOR);
         tft->drawCentreString(name, x + (boxW - 2) / 2, by + boxH / 2 - (LH * _fm) / 2, 1);
 
         if (i < 10) { // Only the first 10 apps have a keyboard digit shortcut (1..9,0)
             String shortcutLabel = (i == 9) ? "0" : String(i + 1);
             tft->setTextSize(_fp);
-            tft->setTextColor(ALCOLOR, BGCOLOR);
+            tft->setTextColor(FGCOLOR, BGCOLOR);
             tft->drawString(shortcutLabel, x + 2, by + 1);
         }
     }
@@ -1215,67 +1110,35 @@ int drawBootAppShortcuts(std::vector<MenuOptions> &opt) {
     return y + rows * (boxH + 2);
 }
 void drawDeviceBorder() {
-    tft->drawRoundRect(5, 5, tftWidth - 10, tftHeight - 10, 5, FGCOLOR);
-    tft->drawLine(5, (6 + 6 + _fp * LH + 5), tftWidth - 6, (6 + 6 + _fp * LH + 5), FGCOLOR);
+    // Omarchy: the top bar, and the screen below it as a focused Hyprland window.
+    omarchy::bar();
+    const int winY = omarchy::kBarHeight + 1;
+    omarchy::frame(1, winY, tftWidth - 2, tftHeight - winY - 1);
 }
 
+// Left edge of the status icons at the right end of the top bar, as in Omarchy's bar.
+static int barStatusLeft(bool hasBattery) { return tftWidth - 4 - (hasBattery ? 4 * LW * _fp + 3 + 16 : 0); }
+
 void drawWifiStatus(bool hasBattery) {
-    const int size = LH * _fp;
-    int u = size / 4;
-    if (u < 1) u = 1;
-    const int gap = 4;
-    int batteryLeft = tftWidth - 5 - (LW * _fp * 4 * hasBattery + 40) - RES;
-    int cx = batteryLeft - gap - 3 * u;
-    int by = 7 + (_fp * LH + 9) / 2 + u;
-    int dot = u < 2 ? 2 : u;
-    tft->fillRect(cx - 3 * u - 1, 6, 6 * u + 3, 4 * u + dot + 2, BGCOLOR);
-    int thick = size / 8;
-    if (thick < 1) thick = 1;
-    for (int k = 1; k <= 3; ++k) {
-        int hw = k * u;
-        int apexY = by - k * u - u + 2;
-        int drop = u;
-        for (int t = 0; t < thick; ++t) {
-            tft->drawLine(cx - hw, apexY + drop + t, cx, apexY + t, FGCOLOR);
-            tft->drawLine(cx, apexY + t, cx + hw, apexY + drop + t, FGCOLOR);
-        }
-    }
-    tft->fillRect(cx - dot / 2, by - dot / 2 + 2, dot, dot, FGCOLOR);
+    const int x = barStatusLeft(hasBattery) - 4 - 8;
+    tft->fillRect(x, 0, 8, omarchy::kBarHeight, BGCOLOR);
+    omarchy::wifiIcon(x, (omarchy::kBarHeight - 8) / 2 + 1, ALCOLOR);
 }
 
 void drawBatteryStatus(uint8_t bat, bool charging) {
-    tft->drawRoundRect(tftWidth - 42 - RES, 7, 34, _fp * LH + 9, 2, FGCOLOR);
+    const int gw = 14;
+    const int gh = 7;
+    const int gx = tftWidth - 4 - 2 - gw;
+    const int gy = (omarchy::kBarHeight - gh) / 2 + 1;
+    const int left = barStatusLeft(true);
+    const uint16_t color = charging ? FGCOLOR : ALCOLOR;
+    tft->fillRect(left, 0, tftWidth - left, omarchy::kBarHeight, BGCOLOR);
+    tft->drawRect(gx, gy, gw, gh, ALCOLOR);
+    tft->fillRect(gx + gw, gy + 2, 2, gh - 4, ALCOLOR); // Battery tip
+    tft->fillRect(gx + 2, gy + 2, (gw - 4) * bat / 100, gh - 4, color);
     tft->setTextSize(_fp);
-    tft->setTextColor(FGCOLOR, BGCOLOR);
-    // Excludes the Marauder Mini and anything else that short: no room for a
-    // percentage beside the gauge.
-    if (panelHeight() > 140) tft->drawRightString("  " + String(bat) + "%", tftWidth - 45 - RES, 12, 1);
-    tft->fillRoundRect(tftWidth - 40 - RES, 9, 30, _fp * LH + 5, 2, BGCOLOR);
-    tft->fillRoundRect(tftWidth - 40 - RES, 9, 30 * bat / 100, _fp * LH + 5, 2, FGCOLOR);
-    tft->drawLine(tftWidth - 30 - RES, 9, tftWidth - 30 - RES, 9 + _fp * LH + 6, BGCOLOR);
-    tft->drawLine(tftWidth - 20 - RES, 9, tftWidth - 20 - RES, 9 + _fp * LH + 6, BGCOLOR);
-    if (!charging) return;
-    // Lightning bolt centred on the gauge. Its body takes the opposite colour of the bar
-    // under the centre and a halo in the other colour outlines it over the rest of the bar.
-    const int cx = tftWidth - 25 - RES;
-    const int t = 10, b = 12 + _fp * LH, cy = (t + b) / 2;
-    const int u = (_fp * LH + 5) / 5;
-    const bool full = bat > 50;
-    const uint16_t halo = full ? FGCOLOR : BGCOLOR;
-    const uint16_t body = full ? BGCOLOR : FGCOLOR;
-    const int8_t offs[][2] = {
-        {-2, 0 },
-        {2,  0 },
-        {0,  -1},
-        {0,  1 },
-        {0,  0 }
-    };
-    for (const auto &o : offs) {
-        uint16_t c = (o[0] || o[1]) ? halo : body;
-        const int x = cx + o[0], y = o[1];
-        tft->fillTriangle(x + u, t + y, x - 2 * u, cy + 1 + y, x, cy + 1 + y, c);
-        tft->fillTriangle(x - u, b + y, x + 2 * u, cy - 1 + y, x, cy - 1 + y, c);
-    }
+    tft->setTextColor(color, BGCOLOR);
+    tft->drawRightString(String(bat) + "%", gx - 3, gy, 1);
 }
 
 /*********************************************************************

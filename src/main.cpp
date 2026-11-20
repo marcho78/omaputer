@@ -42,9 +42,10 @@ uint16_t FGCOLOR = BLACK;
 uint16_t ALCOLOR = 0x8888;
 uint16_t BGCOLOR = WHITE;
 #else
-uint16_t FGCOLOR = GREEN;
-uint16_t ALCOLOR = RED;
-uint16_t BGCOLOR = BLACK;
+// Omarchy theme ("Hacker Neon"): accent, text and background. See omarchy_ui.h.
+uint16_t FGCOLOR = 0x07F3; // #00ff9c
+uint16_t ALCOLOR = 0xB7BA; // #b6f5d2
+uint16_t BGCOLOR = 0x0041; // #050a08
 #endif
 uint16_t odd_color = 0x30c5;
 uint16_t even_color = 0x32e5;
@@ -627,35 +628,8 @@ void loop() {
         }
 #if defined(HAS_KEYBOARD) || defined(HAS_5_BUTTONS) || defined(USE_CARDKB2)
         auto moveMainMenuRow = [&](int direction) {
-            if (tftHeight <= 90) return;
-
-            int cols = (tftHeight > 90) ? 3 : 5;
-            int rows = (opt + cols - 1) / cols;
-            int targetRow = index / cols + direction;
-            if (targetRow < 0) {
-                targetRow = rows - 1;
-            } else if (targetRow >= rows) {
-                targetRow = 0;
-            }
-
-            int targetStart = targetRow * cols;
-            int targetEnd = targetStart + cols;
-            if (targetEnd > opt) targetEnd = opt;
-
-            int currentCenter = menuItems[index].x + menuItems[index].w / 2;
-            int nextIndex = targetStart;
-            int bestDistance = 0x7fffffff;
-            for (int i = targetStart; i < targetEnd; ++i) {
-                int candidateCenter = menuItems[i].x + menuItems[i].w / 2;
-                int distance = candidateCenter > currentCenter ? candidateCenter - currentCenter
-                                                               : currentCenter - candidateCenter;
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    nextIndex = i;
-                }
-            }
-
-            index = nextIndex;
+            // Omarchy restyle: the main menu is a one-column list, so a row is one item.
+            index = (index + direction + opt) % opt;
             pass_by = 0;
             redraw = true;
         };

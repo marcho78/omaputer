@@ -991,6 +991,14 @@ void setBrightnessMenu() {
 **********************************************************************/
 void setUiColor() {
     options = {
+        {"Omarchy",
+         [&]() {
+             FGCOLOR = 0x07F3; // #00ff9c accent
+             BGCOLOR = 0x0041; // #050a08 background
+             ALCOLOR = 0xB7BA; // #b6f5d2 text
+             odd_color = 0x30c5;
+             even_color = 0x32e5;
+         }, _CLR_(FGCOLOR, 0x07F3)},
         {"Default",
          [&]() {
              FGCOLOR = 0x07E0;
@@ -1238,9 +1246,10 @@ void defaultValues() {
     odd_color = 0x5555;
     even_color = 0x2222;
 #else
-    FGCOLOR = 0x07E0;
-    BGCOLOR = 0x0000;
-    ALCOLOR = 0xF800;
+    // Omarchy theme ("Hacker Neon"): accent, background and text. See omarchy_ui.h.
+    FGCOLOR = 0x07F3; // #00ff9c
+    BGCOLOR = 0x0041; // #050a08
+    ALCOLOR = 0xB7BA; // #b6f5d2
     odd_color = 0x30c5;
     even_color = 0x32e5;
 #endif

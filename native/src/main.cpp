@@ -49,6 +49,7 @@ SPIFFSFS SPIFFS;
 // The real thing, compiled as-is against the fakes above.
 #include "../../src/display.cpp"
 #include "../../src/main.cpp"
+#include "../../src/omarchy_ui.cpp"
 
 // ---------------------------------------------------------------------------
 // InputHandler() — what a board's interface.cpp normally provides. Arrow
@@ -78,15 +79,74 @@ static bool pressedEdge(uint8_t gpio, bool &wasDown) {
     return edge;
 }
 
+// ---------------------------------------------------------------------------
+// Headless screenshots, for checking UI changes without a window or a board.
+// LAUNCHER_SCRIPT is a space-separated list of steps, run from InputHandler():
+//   <ms>         wait that long          up down left right sel esc  press a key
+//   shot:<name>  save the screen as <name>.ppm      quit  exit the program
+// Run with SDL_VIDEODRIVER=offscreen so no window opens, for example:
+//   LAUNCHER_SCRIPT="1500 shot:boot sel 800 shot:menu quit" .pio/build/native/program
+// ---------------------------------------------------------------------------
+#include <cctype>
+#include <chrono>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+static void saveScreen(const std::string &name) {
+    const int w = tft->width(), h = tft->height();
+    std::vector<lgfx::rgb888_t> px(static_cast<size_t>(w * h));
+    tft->native()->readRect(0, 0, w, h, px.data());
+    std::ofstream f(name + ".ppm", std::ios::binary);
+    f << "P6\n" << w << " " << h << "\n255\n";
+    for (const auto &p : px) {
+        f.put(static_cast<char>(p.r));
+        f.put(static_cast<char>(p.g));
+        f.put(static_cast<char>(p.b));
+    }
+}
+
+// Returns the key the script presses in this poll, or an empty string.
+static std::string scriptedKey() {
+    using clock = std::chrono::steady_clock;
+    static std::vector<std::string> steps;
+    static size_t next = 0;
+    static bool loaded = false;
+    static clock::time_point resumeAt = clock::now();
+    if (!loaded) {
+        loaded = true;
+        if (const char *script = std::getenv("LAUNCHER_SCRIPT")) {
+            std::istringstream in(script);
+            for (std::string step; in >> step;) steps.push_back(step);
+        }
+    }
+    while (next < steps.size() && clock::now() >= resumeAt) {
+        const std::string step = steps[next++];
+        if (std::isdigit(static_cast<unsigned char>(step[0]))) {
+            resumeAt = clock::now() + std::chrono::milliseconds(std::stoi(step));
+        } else if (step.rfind("shot:", 0) == 0) {
+            saveScreen(step.substr(5));
+        } else if (step == "quit") {
+            std::_Exit(0);
+        } else {
+            return step; // One key per poll, so each press is a separate edge.
+        }
+    }
+    return "";
+}
+
 void InputHandler(void) {
     static bool upDown = false, downDown = false, leftDown = false, rightDown = false, selDown = false,
                 escDown = false;
-    PrevPress = pressedEdge(GPIO_LEFT, leftDown);
-    NextPress = pressedEdge(GPIO_RIGHT, rightDown);
-    UpPress = pressedEdge(GPIO_UP, upDown);
-    DownPress = pressedEdge(GPIO_DOWN, downDown);
-    SelPress = pressedEdge(GPIO_SEL, selDown);
-    EscPress = pressedEdge(GPIO_ESC, escDown);
+    const std::string key = scriptedKey();
+    PrevPress = pressedEdge(GPIO_LEFT, leftDown) || key == "left";
+    NextPress = pressedEdge(GPIO_RIGHT, rightDown) || key == "right";
+    UpPress = pressedEdge(GPIO_UP, upDown) || key == "up";
+    DownPress = pressedEdge(GPIO_DOWN, downDown) || key == "down";
+    SelPress = pressedEdge(GPIO_SEL, selDown) || key == "sel";
+    EscPress = pressedEdge(GPIO_ESC, escDown) || key == "esc";
     AnyKeyPress = PrevPress || NextPress || UpPress || DownPress || SelPress || EscPress;
 }
 
