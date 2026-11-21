@@ -94,9 +94,12 @@ bool wifiConnect(const String &ssid, int encryptation, bool isAP) {
                 // treat that as success instead of showing a spurious Retry menu.
                 if (launcherWifiIsConnected()) break;
                 options = {
-                    {"Retry",     [&]() { yield(); }            },
-                    {"Main Menu", [&]() { returnToMenu = true; }},
+                    {"Retry", [&]() { yield(); }},
                 };
+                // A saved password is used without asking, and a wrong one is not always
+                // reported as wrong (an empty one never is), so let it be changed here.
+                if (encryptation > 0) options.push_back({"Change Password", [&]() { wrongPass = true; }});
+                options.push_back({"Main Menu", [&]() { returnToMenu = true; }});
                 loopOptions(options);
                 if (!returnToMenu) goto Retry;
                 launcherDelayMs(0);

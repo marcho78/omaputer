@@ -14,6 +14,11 @@ void launcherInputUnlock();
 
 bool launcherSelectHeld();
 
+// Clears input until no key has been reported for quietMs, so a key still held from the
+// previous screen (the Enter that opened this one) does not act here too. A held key repeats
+// every 200 ms on the Cardputer, so quietMs must be longer than that.
+void launcherWaitForQuietInput(uint32_t quietMs = 300);
+
 void __attribute__((weak)) powerOff();
 
 void __attribute__((weak)) reboot();

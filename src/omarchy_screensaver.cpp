@@ -40,26 +40,6 @@ constexpr unsigned kMinFreeHeap = 150000;
 // A dimmed or dark screen means the Dim setting got there first, so dimming wins.
 bool screenAwake() { return !dimmer && !isScreenOff && !isSleeping; }
 
-void clearInput() {
-    launcherInputLock();
-    resetGlobals();
-    launcherInputUnlock();
-}
-
-// Swallows input until no key has been reported for kQuietMillis, so a key that is still
-// held (the one that started or stopped the screensaver) does not act on anything else.
-void waitForQuiet() {
-    uint32_t quietSince = launcherMillis();
-    while (launcherMillis() - quietSince < kQuietMillis) {
-        if (AnyKeyPress) {
-            clearInput();
-            quietSince = launcherMillis();
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    clearInput();
-}
-
 unsigned freeHeap() {
 #if defined(USE_NATIVE_SDL)
     return 0;
@@ -110,7 +90,7 @@ bool play() {
         previousMillis = launcherMillis(); // The idle start tries again after the next idle period.
         return false;
     }
-    waitForQuiet(); // The key that started it, or one left over that no menu used.
+    launcherWaitForQuietInput(kQuietMillis); // The key that started it, or one no menu used.
 
     const ofx::Logo logo = ofx::parse_logo(ofx::kOmarchyLogo);
     const ofx::CellGrid grid(logo.width, ofx::CellGrid::kMaxRows);
@@ -169,7 +149,7 @@ bool play() {
         }
         vTaskDelay(1); // Lets the input task run.
     }
-    waitForQuiet(); // The key that stopped it, and its repeats while it is held.
+    launcherWaitForQuietInput(kQuietMillis); // The key that stopped it, and its repeats.
 
     effect.reset();
     frame.reset();

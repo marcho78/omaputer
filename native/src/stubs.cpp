@@ -251,6 +251,23 @@ void launcherInputLockInit() {}
 void launcherInputLock() { g_inputMutex.lock(); }
 void launcherInputUnlock() { g_inputMutex.unlock(); }
 
+// mykeyboard.cpp isn't compiled here; this mirrors its launcherWaitForQuietInput().
+void launcherWaitForQuietInput(uint32_t quietMs) {
+    uint32_t quietSince = launcherMillis();
+    while (launcherMillis() - quietSince < quietMs) {
+        if (AnyKeyPress) {
+            launcherInputLock();
+            resetGlobals();
+            launcherInputUnlock();
+            quietSince = launcherMillis();
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    launcherInputLock();
+    resetGlobals();
+    launcherInputUnlock();
+}
+
 // Serial-monitor command console: nothing types into this harness's stdin in
 // a way that matters yet, so the task just parks itself instead of spinning.
 void taskSerialConsole(void *) {

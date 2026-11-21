@@ -158,6 +158,22 @@ bool launcherSelectHeld() {
     return held;
 }
 
+void launcherWaitForQuietInput(uint32_t quietMs) {
+    uint32_t quietSince = launcherMillis();
+    while (launcherMillis() - quietSince < quietMs) {
+        if (AnyKeyPress) {
+            launcherInputLock();
+            resetGlobals();
+            launcherInputUnlock();
+            quietSince = launcherMillis();
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    launcherInputLock();
+    resetGlobals();
+    launcherInputUnlock();
+}
+
 keyStroke _getKeyPress() {
     // Waiting on the mutex instead of suspending the input task: the writer finishes its
     // update and releases, so neither side is ever frozen mid-allocation. See mykeyboard.h.
@@ -401,6 +417,9 @@ String generalKeyboard(
 #endif
 
     bool firstKeyboardDraw = true;
+#if defined(KEYBOARD_ONLY_INPUT)
+    bool heldKeysCleared = false;
+#endif
 
     // main loop
     while (1) {
@@ -867,6 +886,15 @@ String generalKeyboard(
                 }
             }
 #elif defined(HAS_KEYBOARD)  // Cardputer, T-Deck and T-LoRa-Pager
+#if defined(KEYBOARD_ONLY_INPUT)
+            // The Enter that opened this box may still be held, and a held key repeats every
+            // 200 ms: it would press OK at once and return the text unchanged. For a WiFi
+            // password that was an empty one, which then got saved.
+            if (!heldKeysCleared) {
+                launcherWaitForQuietInput();
+                heldKeysCleared = true;
+            }
+#endif
             if (KeyStroke.pressed) {
                 wakeUpScreen();
                 tft->setCursor(cursor_x, cursor_y);
