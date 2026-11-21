@@ -32,6 +32,10 @@ constexpr int64_t kFrameMicros = 1000000 / 120; // Omarchy runs ttfx at --frame-
 constexpr int kMaxStepsPerDraw = 4;             // Catch-up limit after a slow frame.
 constexpr uint32_t kHoldMillis = 1000;          // A finished logo stays up this long.
 constexpr uint32_t kQuietMillis = 300;          // Longer than the keyboard's 200 ms key repeat.
+// Playing took at most 122.7 KB of heap on the Cardputer (the 64.8 KB frame plus the hungriest
+// effect, measured over all six), so start only with that plus room for the rest of the
+// Launcher, which needs more while WiFi is on. Starting short could abort in an effect.
+constexpr unsigned kMinFreeHeap = 150000;
 
 // A dimmed or dark screen means the Dim setting got there first, so dimming wins.
 bool screenAwake() { return !dimmer && !isScreenOff && !isSleeping; }
@@ -72,6 +76,14 @@ unsigned largestBlock() {
 #endif
 }
 
+bool enoughMemory() {
+#if defined(USE_NATIVE_SDL)
+    return true;
+#else
+    return freeHeap() >= kMinFreeHeap;
+#endif
+}
+
 // The frame holds RGB565 with its two bytes swapped, the order the panel takes, so it is
 // sent as it is.
 void present(const ofx::Framebuffer &frame) {
@@ -88,10 +100,11 @@ void present(const ofx::Framebuffer &frame) {
 }
 
 // Plays until a key is pressed, then clears the screen. Returns false, having drawn nothing,
-// if there is not enough memory for a frame.
+// if there is not enough memory to play.
 bool play() {
     launcherConsolePrintf("Screensaver: start, free heap %u, largest block %u\n", freeHeap(), largestBlock());
-    std::unique_ptr<ofx::Framebuffer> frame(new (std::nothrow) ofx::Framebuffer());
+    std::unique_ptr<ofx::Framebuffer> frame;
+    if (enoughMemory()) frame.reset(new (std::nothrow) ofx::Framebuffer());
     if (!frame) {
         launcherConsolePrintln("Screensaver: not enough memory, skipped");
         previousMillis = launcherMillis(); // The idle start tries again after the next idle period.
