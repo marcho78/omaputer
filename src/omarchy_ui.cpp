@@ -25,6 +25,8 @@ const uint8_t kIconPartitions[8] = {0x00, 0xFF, 0xA5, 0xA5, 0xA5, 0xFF, 0x00, 0x
 const uint8_t kIconSettings[8] = {0x18, 0x7E, 0x66, 0xC3, 0xC3, 0x66, 0x7E, 0x18};
 const uint8_t kIconPower[8] = {0x18, 0x5A, 0x99, 0x99, 0x81, 0x81, 0x42, 0x3C};
 const uint8_t kIconApp[8] = {0xFF, 0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0xFF};
+// Omarchy's square on a monitor.
+const uint8_t kIconScreensaver[8] = {0xFF, 0x81, 0xBD, 0xA5, 0xBD, 0x81, 0xFF, 0x3C};
 const uint8_t kIconWifi[8] = {0x00, 0x7E, 0x81, 0x3C, 0x42, 0x18, 0x18, 0x00};
 
 void bitmap8(const uint8_t *rows, int x, int y, uint16_t color, int scale) {
@@ -94,6 +96,7 @@ void menuIcon(const String &name, int x, int y, uint16_t color, int scale) {
     else if (name == "PMan" || name == "PM") icon = kIconPartitions;
     else if (name == "CFG") icon = kIconSettings;
     else if (name == "OFF") icon = kIconPower;
+    else if (name == "SCREENSAVER") icon = kIconScreensaver;
     bitmap8(icon, x, y, color, scale);
 }
 
@@ -105,6 +108,7 @@ String menuLabel(const String &name) {
     if (name == "PMan" || name == "PM") return "Partitions";
     if (name == "CFG") return "Settings";
     if (name == "OFF") return "Power Off";
+    if (name == "SCREENSAVER") return "Screensaver";
     return "";
 }
 

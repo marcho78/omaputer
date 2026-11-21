@@ -1,7 +1,7 @@
 // Omarchy's screensaver for the Launcher. Omarchy starts its screensaver after 150 s without
-// input (idle.screensaver in its shell.json). It plays its logo with a random terminal text
-// effect, a new one each time, until a key is pressed. This does the same with the effects in
-// lib/omarchy_fx.
+// input (idle.screensaver in its shell.json), or on demand with `omarchy launch screensaver`.
+// It plays its logo with a random terminal text effect, a new one each time, until a key is
+// pressed. This does the same with the effects in lib/omarchy_fx.
 #if defined(OMARCHY_SCREENSAVER)
 
 #include "omarchy_screensaver.h"
@@ -12,6 +12,7 @@
 #include "logo.h"
 #include "mykeyboard.h"
 #include "raster.h"
+#include <algorithm>
 #include <esp_random.h>
 #include <esp_timer.h>
 #include <globals.h>
@@ -33,15 +34,42 @@ constexpr uint32_t kHoldMillis = 1000;          // A finished logo stays up this
 constexpr uint32_t kQuietMillis = 300;          // Longer than the keyboard's 200 ms key repeat.
 
 // A dimmed or dark screen means the Dim setting got there first, so dimming wins.
-bool idleLongEnough() {
-    return !dimmer && !isScreenOff && !isSleeping &&
-           launcherMillis() - previousMillis >= OMARCHY_SCREENSAVER_IDLE_MS;
-}
+bool screenAwake() { return !dimmer && !isScreenOff && !isSleeping; }
 
 void clearInput() {
     launcherInputLock();
     resetGlobals();
     launcherInputUnlock();
+}
+
+// Swallows input until no key has been reported for kQuietMillis, so a key that is still
+// held (the one that started or stopped the screensaver) does not act on anything else.
+void waitForQuiet() {
+    uint32_t quietSince = launcherMillis();
+    while (launcherMillis() - quietSince < kQuietMillis) {
+        if (AnyKeyPress) {
+            clearInput();
+            quietSince = launcherMillis();
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    clearInput();
+}
+
+unsigned freeHeap() {
+#if defined(USE_NATIVE_SDL)
+    return 0;
+#else
+    return static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT));
+#endif
+}
+
+unsigned largestBlock() {
+#if defined(USE_NATIVE_SDL)
+    return 0;
+#else
+    return static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#endif
 }
 
 // The frame holds RGB565 with its two bytes swapped, the order the panel takes, so it is
@@ -59,33 +87,17 @@ void present(const ofx::Framebuffer &frame) {
 #endif
 }
 
-void logHeap(const char *event) {
-#if !defined(USE_NATIVE_SDL)
-    launcherConsolePrintf(
-        "Screensaver: %s, free heap %u, largest block %u, lowest since boot %u\n",
-        event,
-        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
-        static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
-        static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT))
-    );
-#else
-    launcherConsolePrintf("Screensaver: %s\n", event);
-#endif
-}
-
-} // namespace
-
-bool omarchyScreensaver() {
-    if (!idleLongEnough()) return false;
-
-    logHeap("start");
+// Plays until a key is pressed, then clears the screen. Returns false, having drawn nothing,
+// if there is not enough memory for a frame.
+bool play() {
+    launcherConsolePrintf("Screensaver: start, free heap %u, largest block %u\n", freeHeap(), largestBlock());
     std::unique_ptr<ofx::Framebuffer> frame(new (std::nothrow) ofx::Framebuffer());
     if (!frame) {
         launcherConsolePrintln("Screensaver: not enough memory, skipped");
-        previousMillis = launcherMillis(); // Tries again after the next idle period.
+        previousMillis = launcherMillis(); // The idle start tries again after the next idle period.
         return false;
     }
-    clearInput(); // A key no menu used, left over from earlier, must not stop it at once.
+    waitForQuiet(); // The key that started it, or one left over that no menu used.
 
     const ofx::Logo logo = ofx::parse_logo(ofx::kOmarchyLogo);
     const ofx::CellGrid grid(logo.width, ofx::CellGrid::kMaxRows);
@@ -97,8 +109,10 @@ bool omarchyScreensaver() {
     uint32_t startedAt = 0;
     uint32_t frames = 0; // Animation frames stepped in the current effect.
     uint32_t draws = 0;  // Frames actually sent to the display.
+    unsigned lowest = freeHeap();
+    const unsigned long since = previousMillis; // Every key press moves it (wakeUpScreen).
 
-    while (idleLongEnough() && !AnyKeyPress) {
+    while (previousMillis == since && !AnyKeyPress && screenAwake()) {
         if (finished && launcherMillis() - finishedAt >= kHoldMillis) {
             const int count = ofx::effect_count();
             int index = static_cast<int>(launcherRandom(count));
@@ -138,28 +152,33 @@ bool omarchyScreensaver() {
             effect->draw(*frame, grid);
             present(*frame);
             ++draws;
+            lowest = std::min(lowest, freeHeap());
         }
         vTaskDelay(1); // Lets the input task run.
     }
-
-    // Swallow the key that stopped it, and its repeats while it is held, so the menu
-    // underneath does not act on it too.
-    uint32_t quietSince = launcherMillis();
-    while (launcherMillis() - quietSince < kQuietMillis) {
-        if (AnyKeyPress) {
-            clearInput();
-            quietSince = launcherMillis();
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    clearInput();
+    waitForQuiet(); // The key that stopped it, and its repeats while it is held.
 
     effect.reset();
     frame.reset();
     tft->fillScreen(BGCOLOR);
     previousMillis = launcherMillis();
-    logHeap("stop");
+    launcherConsolePrintf(
+        "Screensaver: stop, free heap %u, largest block %u, lowest while playing %u\n",
+        freeHeap(),
+        largestBlock(),
+        lowest
+    );
     return true;
+}
+
+} // namespace
+
+bool omarchyScreensaver() {
+    return screenAwake() && launcherMillis() - previousMillis >= OMARCHY_SCREENSAVER_IDLE_MS && play();
+}
+
+void omarchyScreensaverNow() {
+    if (!play()) displayError("Not enough memory");
 }
 
 #endif

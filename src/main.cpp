@@ -536,6 +536,10 @@ void loop() {
         );
     }
 
+#if defined(OMARCHY_SCREENSAVER)
+    // The name is longer than an installed app's 5-letter icon, so it can't match one.
+    menuItems.push_back({"SCREENSAVER", "Start the screensaver", [=]() { omarchyScreensaverNow(); }});
+#endif
     menuItems.push_back(
         // Add power off option for devices that are not easy to turn off
         // on e-paper, it keeps the Launcher bootscreen printed
