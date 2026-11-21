@@ -352,7 +352,11 @@ void InputHandler(void) {
         return;
     } else {
         Keyboard.update();
-        if (!Keyboard.isPressed()) {
+        const Keyboard_Class::KeysState &status = Keyboard.keysState();
+        // Aa (Shift), Fn, ctrl, opt and alt only change the key pressed with them. Counted as a
+        // press on their own, a held Aa kept restarting the 200 ms repeat delay above, so a
+        // letter tapped while holding it was usually missed: no capitals or shifted symbols.
+        if (!Keyboard.isPressed() || (status.word.empty() && status.hid_keys.empty())) {
             KeyStroke.Clear();
             LongPressTmp = false;
             return;
@@ -363,7 +367,6 @@ void InputHandler(void) {
         AnyKeyPress = true;
 
         keyStroke key;
-        Keyboard_Class::KeysState status = Keyboard.keysState();
         for (auto i : status.hid_keys) key.hid_keys.push_back(i);
         for (auto i : status.word) {
             key.word.push_back(i);

@@ -1,6 +1,7 @@
 #include "mykeyboard.h"
 #include "display.h"
 #include "idf/launcher_platform.h"
+#include "omarchy_ui.h"
 #include "powerSave.h"
 #include "settings.h"
 #include <globals.h>
@@ -17,6 +18,11 @@
 #else
 #undef HAS_1_BUTTON    // make sure it is 1 when defined
 #define HAS_1_BUTTON 1 // make sure it is 1 when defined
+#endif
+// On keyboard-only devices (the Cardputer) text is typed on the keys, so the on-screen
+// keyboard's buttons and grid can never be selected. The text box shows a key guide instead.
+#if defined(HAS_KEYBOARD) && !defined(HAS_TOUCH) && !defined(HAS_ENCODER)
+#define KEYBOARD_ONLY_INPUT
 #endif
 int max_FM_size = (tftWidth - RES) / (LW * _fm) - 1;
 int max_FP_size = (tftWidth - RES) / (LW)-2;
@@ -410,6 +416,16 @@ String generalKeyboard(
             tft->setTextSize(_fm);
 
             // Draw the top row buttons_strings
+#if defined(KEYBOARD_ONLY_INPUT)
+            if (fullKeyRedraw) { // The keys that do the buttons' jobs, once: nothing redraws there.
+                tft->setTextSize(_fp);
+                tft->setTextColor(omarchy::mutedText(), BGCOLOR);
+                tft->drawString("Enter: OK    Del: erase", 3 + RES / 2, 3);
+                tft->drawString("hold Aa: capitals   Fn+`: cancel", 3 + RES / 2, 3 + LH * _fp + 2);
+                tft->setTextSize(_fm);
+                tft->setTextColor(getComplementaryColor(BGCOLOR), BGCOLOR);
+            }
+#else
             if (y < 0 || old_y < 0 || direction != last_dir || caps != last_caps) {
                 last_dir = direction;
                 last_caps = caps;
@@ -483,6 +499,7 @@ String generalKeyboard(
 #endif
                 tft->setTextColor(getComplementaryColor(BGCOLOR), BGCOLOR);
             }
+#endif
 
             // Prints the chars counter
             if (counter_height > 0) {
@@ -537,6 +554,7 @@ String generalKeyboard(
             }
 
             tft->setTextSize(_fm);
+#if !defined(KEYBOARD_ONLY_INPUT)
             // Draw the actual keyboard
             for (int i = 0; i < KeyboardHeight; i++) {
                 for (int j = 0; j < KeyboardWidth; j++) {
@@ -582,6 +600,7 @@ String generalKeyboard(
                     ALIVIATE_TASK;
                 }
             }
+#endif
             // backup key coordinates
             old_x = x;
             old_y = y;
