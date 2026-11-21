@@ -1,0 +1,8 @@
+{
+  "name": "omarchy_fx",
+  "version": "1.0.0",
+  "description": "Omarchy's logo animated with six effects ported from Omarchy's ttfx, for the Launcher's screensaver. See README.md and NOTICE.",
+  "headers": "effect.h",
+  "frameworks": "*",
+  "platforms": "*"
+}

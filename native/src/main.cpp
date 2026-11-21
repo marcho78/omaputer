@@ -50,6 +50,7 @@ SPIFFSFS SPIFFS;
 // The real thing, compiled as-is against the fakes above.
 #include "../../src/display.cpp"
 #include "../../src/main.cpp"
+#include "../../src/omarchy_screensaver.cpp"
 #include "../../src/omarchy_ui.cpp"
 
 // ---------------------------------------------------------------------------
@@ -149,6 +150,7 @@ void InputHandler(void) {
     SelPress = pressedEdge(GPIO_SEL, selDown) || key == "sel";
     EscPress = pressedEdge(GPIO_ESC, escDown) || key == "esc";
     AnyKeyPress = PrevPress || NextPress || UpPress || DownPress || SelPress || EscPress;
+    if (AnyKeyPress) wakeUpScreen(); // Restarts the idle timer, as a board's InputHandler does.
 }
 
 // ---------------------------------------------------------------------------

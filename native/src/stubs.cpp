@@ -209,7 +209,11 @@ void loopOptionsWebUi() {
     tft->fillScreen(BGCOLOR);
 }
 
-bool wakeUpScreen() { return false; }
+// The screen never sleeps here, but the idle timer still restarts, as in powerSave.cpp.
+bool wakeUpScreen() {
+    previousMillis = launcherMillis();
+    return false;
+}
 
 void partitionCrawler() {}
 void launcherPartitionInitDefaultSizes() {}

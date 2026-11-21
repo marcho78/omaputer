@@ -12,6 +12,7 @@
 #include <SD.h>
 #include <SPIFFS.h>
 
+#include "omarchy_screensaver.h"
 #include "powerSave.h"
 #include "ram_profile.h"
 #include "utils.h"
@@ -544,6 +545,10 @@ void loop() {
     opt = menuItems.size(); // number of options in the menu
     update_sd = sdcardMounted;
     while (1) {
+        if (omarchyScreensaver()) {
+            first_loop = true; // Full redraw, then the first-draw pause that drops stray input.
+            redraw = true;
+        }
         if (redraw) {
             if (update_sd != sdcardMounted) {
                 for (auto o : menuItems) {

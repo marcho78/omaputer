@@ -4,6 +4,7 @@
 #include "idf/idf_wifi.h"
 #include "idf/launcher_platform.h"
 #include "mykeyboard.h"
+#include "omarchy_screensaver.h"
 #include "omarchy_ui.h"
 #include "onlineLauncher.h"
 #include "powerSave.h"
@@ -1160,6 +1161,10 @@ int loopOptions(std::vector<Option> &options, bool bright, uint16_t al, uint16_t
     int min_idx = 255;
     LongPressTmp = launcherMillis();
     while (1) {
+        if (omarchyScreensaver()) {
+            firstDraw = true; // The screensaver cleared the screen: redraw all of it.
+            redraw = true;
+        }
         if (redraw) {
             list = {};
             bool wasFirstDraw = firstDraw;
