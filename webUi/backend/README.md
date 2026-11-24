@@ -45,7 +45,8 @@ Login padrao: `admin` / `admin`
 | `/ping` | GET | Retorna `launcher-pong` |
 | `/login` | POST | Autentica e cria cookie de sessao |
 | `/logout` | GET | Encerra sessao e redireciona |
-| `/systeminfo` | GET | Versao mock + estatisticas do SD |
+| `/systeminfo` | GET | Versao mock, estatisticas do SD, apps, bateria, memoria e WiFi |
+| `/settings` | GET / POST | Configuracoes do dispositivo em JSON; o POST muda so as chaves enviadas |
 | `/listfiles?folder=` | GET | Lista real do diretorio |
 | `/file?name=&action=` | GET | Download, delete ou create (pasta) |
 | `/editfile?name=` | GET / POST | Le e salva arquivos de texto |
@@ -55,7 +56,7 @@ Login padrao: `admin` / `admin`
 | `/partitions` | GET | Tabela de particoes atual (com edicoes pendentes, se houver) |
 | `/partitions?list=backups&label=` | GET | Lista de backups conhecidos para uma particao |
 | `/partitions` | POST | `action=resize\|create\|delete\|format\|apply\|discard\|backup\|restore` |
-| `/wifi` | GET | Simulado |
+| `/wifi` | POST | Muda o login (`usr`, `pwd`), salva uma rede (`ssid`, `pwd`) ou esquece uma (`forget`) |
 | `/sdpins` | GET | Simulado |
 | `/reboot` | GET | Simulado |
 | `/OTA?update=1` | GET | Entra em modo de update e limpa o contexto OTA simulado |

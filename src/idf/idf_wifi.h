@@ -73,6 +73,8 @@ bool launcherWifiStop();
 bool launcherWifiIsConnected();
 std::string launcherWifiLocalIp();
 std::string launcherWifiApIp();
+// The network the station is on and its signal in dBm; false when it is on none.
+bool launcherWifiStaInfo(std::string &ssid, int &rssi);
 std::string launcherWifiMac();
 bool launcherMdnsStart(const char *host, uint16_t port = 80);
 void launcherMdnsStop();

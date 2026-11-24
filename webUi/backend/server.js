@@ -10,8 +10,8 @@ const crypto = require('crypto');
 const ROOT_DIR  = path.resolve(process.argv[2] || '.');
 const PORT      = parseInt(process.env.PORT || '8080', 10);
 const WEBUI_DIR = path.resolve(__dirname, '..');
-const USERNAME  = process.env.WUI_USR || 'admin';
-const PASSWORD  = process.env.WUI_PWD || 'admin';
+let USERNAME    = process.env.WUI_USR || 'admin';
+let PASSWORD    = process.env.WUI_PWD || 'admin';
 const NVS_FILE  = path.join(__dirname, 'nvs_mock.json');
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -33,6 +33,21 @@ if (!Object.keys(nvs).length) {
   fs.writeFileSync(NVS_FILE, JSON.stringify(nvs, null, 2));
 }
 function saveNvs() { fs.writeFileSync(NVS_FILE, JSON.stringify(nvs, null, 2)); }
+
+// The device's settings and saved networks, for /settings and /wifi (settingsHandler and
+// wifiHandler in webInterface.cpp). The keys here are the ones a POST may change.
+const settings = {
+  bright: 100, dimmerSet: 0, onlyBins: true, noDotFiles: true, autoBackup: true, askSpiffs: true, autoConnect: false,
+  bootToApp: false, bootTimer: 4, DDLB: false, FGCOLOR: 0x07F3, BGCOLOR: 0x0041, ALCOLOR: 0xB7BA, odd: 0x30C5, even: 0x32E5,
+};
+const wifiNetworks = [{ ssid: 'MyNetwork', pwd: 'secret' }, { ssid: 'Cafe', pwd: '' }];
+const startedAt = Date.now();
+function settingsView() {
+  return {
+    ...settings, wui_usr: USERNAME, defaultLogin: USERNAME === 'admin' && PASSWORD === 'launcher',
+    wifi: wifiNetworks.map(n => ({ ssid: n.ssid, pwd: !!n.pwd })),
+  };
+}
 
 // ── Partition Manager (PMan) mock ───────────────────────────────────────────────
 // Mirrors the model in src/partition_table_model.cpp / src/partitioner.cpp closely
@@ -612,23 +627,8 @@ const server = http.createServer(async (req, res) => {
   // GET /style.css
   if (pathname === '/style.css') return serveFile(path.join(WEBUI_DIR, 'style.css'), 'text/css');
 
-  // GET /logged-out
-  if (pathname === '/logged-out') return serveFile(path.join(WEBUI_DIR, 'logout.html'), 'text/html');
-
-  // GET /systeminfo  (no auth required — scripts.js calls it on page load)
-  if (pathname === '/systeminfo' && method === 'GET') {
-    const totalBytes = 10 * 1024 * 1024 * 1024;
-    const usedBytes = 2 * 1024 * 1024 * 1024;
-    const freeBytes = totalBytes - usedBytes;
-    const body = JSON.stringify({
-      VERSION: '1.0.0-mock',
-      SD: {
-        free: humanReadableSize(freeBytes), used: humanReadableSize(usedBytes), total: humanReadableSize(totalBytes),
-        freeBytes, usedBytes, totalBytes,
-      }
-    });
-    return sendJson(body);
-  }
+  // GET /logged-out (the login page says it now)
+  if (pathname === '/logged-out') return redirect('/?loggedout');
 
   // GET / — serve login page or main UI
   if (pathname === '/' && method === 'GET') {
@@ -676,6 +676,41 @@ const server = http.createServer(async (req, res) => {
 
   // ── Auth wall ────────────────────────────────────────────────────────────────
   if (!isAuthenticated(req)) return err(401, 'Unauthorized');
+
+  // GET /systeminfo
+  if (pathname === '/systeminfo' && method === 'GET') {
+    const totalBytes = 10 * 1024 * 1024 * 1024;
+    const usedBytes = 2 * 1024 * 1024 * 1024;
+    const freeBytes = totalBytes - usedBytes;
+    const body = JSON.stringify({
+      VERSION: '1.0.0-mock',
+      SD: {
+        free: humanReadableSize(freeBytes), used: humanReadableSize(usedBytes), total: humanReadableSize(totalBytes),
+        freeBytes, usedBytes, totalBytes,
+      },
+      APPS: sourceTable().entries.filter(e => e.type === 0 && e.appName).map(e => ({ label: e.label, name: e.appName })),
+      DEVICE: 'M5Stack Cardputer',
+      UPTIME: Math.floor((Date.now() - startedAt) / 1000),
+      HEAP: 142336,
+      HEAP_TOTAL: 331776,
+      BATTERY: 76,
+      CHARGING: false,
+      WIFI: { ap: false, ip: '192.168.1.42', ssid: 'MyNetwork', rssi: -58 },
+    });
+    return sendJson(body);
+  }
+
+  // GET /settings   POST /settings (JSON of the keys that change)
+  if (pathname === '/settings') {
+    if (method === 'POST') {
+      let incoming;
+      try { incoming = JSON.parse((await readBody(req)).toString()); } catch { return err(400, 'Invalid settings'); }
+      for (const k of Object.keys(settings)) if (k in incoming) settings[k] = incoming[k];
+      if (settings.dimmerSet > 120) settings.dimmerSet = 10;
+      console.log(`[SETTINGS] ${JSON.stringify(incoming)}`);
+    }
+    return sendJson(JSON.stringify(settingsView()));
+  }
 
   // GET /reboot
   if (pathname === '/reboot') {
@@ -857,6 +892,11 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/OTA' && method === 'POST') {
     const body = await readBody(req);
     const params = parseParams(body, req.headers['content-type'] || '');
+    if (Object.prototype.hasOwnProperty.call(params, 'update')) {
+      clearOtaContext();
+      console.log('[OTA] update mode enabled (simulated)');
+      return ok('Update');
+    }
     if (!Object.prototype.hasOwnProperty.call(params, 'command')) return err(400, 'Invalid OTA request');
 
     try {
@@ -918,17 +958,28 @@ const server = http.createServer(async (req, res) => {
     return ok('Functionality exclusive for Headless environment');
   }
 
-  // GET /wifi
-  if (pathname === '/wifi' && method === 'GET') {
-    const { usr, pwd, ssid } = query;
-    if (usr && pwd) {
-      console.log(`[WIFI] credentials updated  user=${usr}`);
-      return ok(`User: ${usr} configured with password: ${pwd}`);
+  // POST /wifi: change the login (usr + pwd), forget a network (forget), or save one (ssid + pwd)
+  if (pathname === '/wifi' && method === 'POST') {
+    const params = parseParams(await readBody(req), req.headers['content-type'] || '');
+    if ('usr' in params) {
+      if (!params.usr || !params.pwd) return err(400, 'A username and a password are needed');
+      USERNAME = params.usr;
+      PASSWORD = params.pwd;
+      console.log(`[WIFI] login changed, user=${USERNAME}`);
+      return ok('Login changed');
     }
-    if (ssid && pwd) {
-      console.log(`[WIFI] ssid=${ssid}`);
+    if ('forget' in params) {
+      const i = wifiNetworks.findIndex(n => n.ssid === params.forget);
+      if (i < 0) return err(404, "That network isn't saved");
+      wifiNetworks.splice(i, 1);
+      return ok('Network forgotten');
     }
-    return ok('OK');
+    if (!params.ssid) return err(400, 'A network name is needed');
+    const known = wifiNetworks.find(n => n.ssid === params.ssid);
+    if (known) known.pwd = params.pwd || '';
+    else wifiNetworks.push({ ssid: params.ssid, pwd: params.pwd || '' });
+    console.log(`[WIFI] saved ssid=${params.ssid}`);
+    return ok('Network saved');
   }
 
   // Fallback

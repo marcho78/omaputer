@@ -559,6 +559,18 @@ std::string launcherWifiApIp() {
     return ipFromNetif(apNetif);
 }
 
+bool launcherWifiStaInfo(std::string &ssid, int &rssi) {
+#if defined(ENABLE_ESP_AT_INTERFACE)
+    if (activeBackend == LauncherWifiBackend::EspAt) return false;
+#endif
+    if (!launcherWifiIsConnected()) return false;
+    wifi_ap_record_t ap = {};
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return false;
+    ssid = reinterpret_cast<const char *>(ap.ssid);
+    rssi = ap.rssi;
+    return true;
+}
+
 std::string launcherWifiMac() {
 #if defined(ENABLE_ESP_AT_INTERFACE)
     if (activeBackend == LauncherWifiBackend::EspAt) return launcherWifiAtMac();

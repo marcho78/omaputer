@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <esp_heap_caps.h>
 #include <esp_partition.h>
 #include <globals.h>
 #include <memory>
@@ -84,6 +85,7 @@ const int default_webserverporthttp = 80;
 Config config;
 httpd_handle_t server = nullptr;
 const char *host = "launcher";
+bool webUiApMode = false; // The WebUI runs on the Launcher's own access point, not a network it joined.
 bool shouldReboot = false;
 String uploadFolder = "";
 
@@ -1151,8 +1153,9 @@ esp_err_t logoutHandler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// The login page says when someone has logged out, so this old address just leads there.
 esp_err_t loggedOutHandler(httpd_req_t *req) {
-    serveWebUIFile(req, "text/html", true, logout_html, logout_html_size);
+    redirectTo(req, "/?loggedout");
     return ESP_OK;
 }
 
@@ -1250,6 +1253,7 @@ esp_err_t rootHandler(httpd_req_t *req) {
 }
 
 esp_err_t systemInfoHandler(httpd_req_t *req) {
+    if (!checkUserWebAuth(req)) return ESP_OK;
     uint64_t SDTotalBytes = SDM.totalBytes();
     uint64_t SDUsedBytes = SDM.usedBytes();
     uint64_t SDFreeBytes = SDTotalBytes - SDUsedBytes;
@@ -1271,6 +1275,26 @@ esp_err_t systemInfoHandler(httpd_req_t *req) {
         appObj["label"] = app.label;
         appObj["name"] = app.name.isEmpty() ? app.label : app.name;
     }
+
+    // For the WebUI's status bar and overview.
+    doc["DEVICE"] = device_name;
+    doc["UPTIME"] = launcherMillis() / 1000;
+    doc["HEAP"] = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    doc["HEAP_TOTAL"] = heap_caps_get_total_size(MALLOC_CAP_8BIT);
+    doc["BATTERY"] = getBattery(); // 0 or less: the board can't tell
+    doc["CHARGING"] = isCharging();
+    JsonObject wifi = doc["WIFI"].to<JsonObject>();
+    wifi["ap"] = webUiApMode;
+    wifi["ip"] = String((webUiApMode ? launcherWifiApIp() : launcherWifiLocalIp()).c_str());
+    std::string staSsid;
+    int rssi = 0;
+    if (!webUiApMode && launcherWifiStaInfo(staSsid, rssi)) {
+        wifi["ssid"] = String(staSsid.c_str());
+        wifi["rssi"] = rssi;
+    }
+#if defined(HEADLESS)
+    doc["HEADLESS"] = true; // SD card pins can only be set on boards without a screen.
+#endif
 
     String json;
     serializeJson(doc, json);
@@ -2094,31 +2118,109 @@ esp_err_t sdPinsHandler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// The WebUI's Settings page: the values the device's Settings menu changes. GET reads them,
+// and a POST of the same JSON keys (just the changed ones) applies and saves them. Passwords
+// are never sent back: saved networks come as names, and the login only says whether it is
+// still the default.
+esp_err_t settingsHandler(httpd_req_t *req) {
+    if (!checkUserWebAuth(req)) return ESP_OK;
+    if (req->method == HTTP_POST) {
+        String body;
+        JsonDocument incoming;
+        if (!receiveBody(req, body, 1024) || deserializeJson(incoming, body) || !incoming.is<JsonObject>()) {
+            sendText(req, 400, "text/plain", "Invalid settings");
+            return ESP_OK;
+        }
+        // The login and WiFi passwords change through /wifi, so only these keys pass.
+        static const char *const kEditable[] = {
+            "bright",    "dimmerSet", "onlyBins", "noDotFiles", "autoBackup", "askSpiffs", "autoConnect",
+            "bootToApp", "bootTimer", "DDLB",     "FGCOLOR",    "BGCOLOR",    "ALCOLOR",   "odd",
+            "even"
+        };
+        JsonDocument changes;
+        for (const char *key : kEditable) {
+            if (!incoming[key].isNull()) changes[key] = incoming[key];
+        }
+        body = "";
+        serializeJson(changes, body);
+        if (!loadSettingsJson(body)) {
+            sendText(req, 500, "text/plain", "Could not save the settings");
+            return ESP_OK;
+        }
+    }
+
+    JsonDocument doc;
+    doc["bright"] = bright;
+    doc["dimmerSet"] = dimmerSet;
+    doc["onlyBins"] = onlyBins;
+    doc["noDotFiles"] = noDotFiles;
+    doc["autoBackup"] = autoBackup;
+    doc["askSpiffs"] = askSpiffs;
+    doc["autoConnect"] = autoConnect;
+    doc["bootToApp"] = bootToApp;
+    doc["bootTimer"] = bootTimer;
+    doc["DDLB"] = DDLB;
+    doc["FGCOLOR"] = FGCOLOR;
+    doc["BGCOLOR"] = BGCOLOR;
+    doc["ALCOLOR"] = ALCOLOR;
+    doc["odd"] = odd_color;
+    doc["even"] = even_color;
+    doc["wui_usr"] = wui_usr;
+    doc["defaultLogin"] = wui_usr == "admin" && wui_pwd == "launcher";
+    JsonArray wifi = doc["wifi"].to<JsonArray>();
+    for (const LauncherSavedWifiNetwork &network : getSavedWifiNetworks()) {
+        JsonObject entry = wifi.add<JsonObject>();
+        entry["ssid"] = network.ssid;
+        entry["pwd"] = network.hasPassword;
+    }
+    String json;
+    serializeJson(doc, json);
+    sendText(req, "application/json", json);
+    return ESP_OK;
+}
+
+// Changes the WebUI login (usr + pwd), forgets a saved network (forget), or saves one
+// (ssid + pwd, an empty pwd for an open network). Everything comes in the POST body, so
+// passwords never appear in a URL, and none is ever sent back.
 esp_err_t wifiHandler(httpd_req_t *req) {
     if (!checkUserWebAuth(req)) return ESP_OK;
-    String usr = queryValue(req, "usr");
-    String pwdd = queryValue(req, "pwd");
-    if (!usr.isEmpty() && !pwdd.isEmpty()) {
+    WebParamMap params = readParams(req);
+    String pwdd = params.get("pwd");
+    if (params.has("usr")) {
+        String usr = params.get("usr");
+        if (usr.isEmpty() || pwdd.isEmpty()) {
+            sendText(req, 400, "text/plain", "A username and a password are needed");
+            return ESP_OK;
+        }
         wui_pwd = pwdd;
         wui_usr = usr;
         saveConfigs();
         config.httpuser = usr;
         config.httppassword = pwdd;
-        sendText(req, "text/plain", "User: " + String(ssid) + " configured with password: " + String(pwd));
+        sendText(req, "text/plain", "Login changed");
         return ESP_OK;
     }
 
-    String ssidd = queryValue(req, "ssid");
-    if (!ssidd.isEmpty() && !pwdd.isEmpty()) {
-        pwd = pwdd;
-        ssid = ssidd;
-        if (setWifiCredential(ssid, pwd)) {
-            saveConfigs();
-        } else {
-            launcherConsolePrintln("WebUI: failed to store new WiFi entry");
-        }
+    if (params.has("forget")) {
+        if (removeWifiCredential(params.get("forget"))) sendText(req, "text/plain", "Network forgotten");
+        else sendText(req, 404, "text/plain", "That network isn't saved");
+        return ESP_OK;
     }
-    sendText(req, "text/plain", "OK");
+
+    String ssidd = params.get("ssid");
+    if (ssidd.isEmpty()) {
+        sendText(req, 400, "text/plain", "A network name is needed");
+        return ESP_OK;
+    }
+    pwd = pwdd;
+    ssid = ssidd;
+    if (!setWifiCredential(ssid, pwd)) {
+        launcherConsolePrintln("WebUI: failed to store new WiFi entry");
+        sendText(req, 500, "text/plain", "Could not save the network");
+        return ESP_OK;
+    }
+    saveConfigs();
+    sendText(req, "text/plain", "Network saved");
     return ESP_OK;
 }
 
@@ -2173,7 +2275,9 @@ void configureWebServer() {
     registerHandler("/partitions", HTTP_GET, partitionsHandler);
     registerHandler("/partitions", HTTP_POST, partitionsHandler);
     registerHandler("/sdpins", HTTP_GET, sdPinsHandler);
-    registerHandler("/wifi", HTTP_GET, wifiHandler);
+    registerHandler("/settings", HTTP_GET, settingsHandler);
+    registerHandler("/settings", HTTP_POST, settingsHandler);
+    registerHandler("/wifi", HTTP_POST, wifiHandler);
     registerHandler("/*", HTTP_GET, fallbackHandler);
     registerHandler("/*", HTTP_POST, fallbackHandler);
 }
@@ -2254,6 +2358,7 @@ void stopWebServerAndWifi() {
 void startWebUi(const String &ssid, int encryptation, bool mode_ap) {
     RAM_LOG(mode_ap ? "startWebUi-ap-start" : "startWebUi-sta-start");
     file_size = 0;
+    webUiApMode = mode_ap;
 #if defined(ENABLE_ESP_AT_INTERFACE)
     if (launcherWifiActiveBackend() == LauncherWifiBackend::EspAt) {
         launcherConsolePrintln("WebUI unavailable: ESP-AT backend has no local TCP/IP stack");

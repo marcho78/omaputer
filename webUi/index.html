@@ -1,93 +1,200 @@
-<!DOCTYPE HTML>
+<!DOCTYPE html>
 <html lang="en">
 <head>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta charset="UTF-8">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#030705">
+<title>launcher</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 54 52'><path fill='%2300ff9c' d='M0 0h54v4h-54zM0 4h4v4h-4zM25 4h4v4h-4zM50 4h4v4h-4zM0 8h4v4h-4zM8 8h21v4h-21zM38 8h8v4h-8zM50 8h4v4h-4zM0 12h4v12h-4zM8 12h4v12h-4zM42 12h4v12h-4zM50 12h4v12h-4zM0 24h12v4h-12zM42 24h4v4h-4zM50 24h4v4h-4zM0 28h4v12h-4zM8 28h4v12h-4zM42 28h4v12h-4zM50 28h4v12h-4zM0 40h4v4h-4zM8 40h38v4h-38zM50 40h4v4h-4zM0 44h4v4h-4zM25 44h4v4h-4zM50 44h4v4h-4zM0 48h29v4h-29zM34 48h20v4h-20z'/></svg>">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="w">
-  <div class="card">
-    <h1>&#11835; LAUNCHER &#11835;</h1>
-    <div class="row" style="margin-bottom:6px">
-      <div class="tag">v <b id="firmwareVersion">&#8230;</b></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<!-- Omarchy's logo, from its icon.txt. Omarchy is MIT licensed, (c) David Heinemeier Hansson. -->
+<symbol id="logo" viewBox="0 0 54 52"><path d="M0 0h54v4h-54zM0 4h4v4h-4zM25 4h4v4h-4zM50 4h4v4h-4zM0 8h4v4h-4zM8 8h21v4h-21zM38 8h8v4h-8zM50 8h4v4h-4zM0 12h4v12h-4zM8 12h4v12h-4zM42 12h4v12h-4zM50 12h4v12h-4zM0 24h12v4h-12zM42 24h4v4h-4zM50 24h4v4h-4zM0 28h4v12h-4zM8 28h4v12h-4zM42 28h4v12h-4zM50 28h4v12h-4zM0 40h4v4h-4zM8 40h38v4h-38zM50 40h4v4h-4zM0 44h4v4h-4zM25 44h4v4h-4zM50 44h4v4h-4zM0 48h29v4h-29zM34 48h20v4h-20z"/></symbol>
+<symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0M12 20h.01"/></symbol>
+<symbol id="i-bat" viewBox="0 0 24 24"><path d="M2 7h17v10H2zM22 10v4"/></symbol>
+<symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+<symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v9M6.3 5.7a8 8 0 1 0 11.4 0"/></symbol>
+<symbol id="i-dir" viewBox="0 0 24 24"><path d="M3 5h6l2 3h10v11H3z"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M6 2h8l5 5v15H6zM14 2v5h5"/></symbol>
+<symbol id="i-chip" viewBox="0 0 24 24"><path d="M7 7h10v10H7zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="M12 20V5M5 12l7-7 7 7"/></symbol>
+<symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></symbol>
+<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"/></symbol>
+<symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13 7l4 4"/></symbol>
+<symbol id="i-rename" viewBox="0 0 24 24"><path d="M8 4h8M8 20h8M12 4v16"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2-4.9M19 4v4h-4"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l12 8-12 8z"/></symbol>
+<symbol id="i-install" viewBox="0 0 24 24"><path d="M12 3v11M7 9l5 5 5-5M4 15v5h16v-5"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+<symbol id="i-resize" viewBox="0 0 24 24"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/></symbol>
+<symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5zM8 3v5h7V3M8 21v-7h8v7"/></symbol>
+<symbol id="i-restore" viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2-4.9M5 4v4h4"/></symbol>
+<symbol id="i-wipe" viewBox="0 0 24 24"><path d="M3 21h18M6 17l9-12 5 4-9 12H6z"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><path d="M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><path d="M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM15.5 15.5 21 21"/></symbol>
+</svg>
+
+<header class="bar">
+  <a class="logo" href="#overview" aria-label="Overview"><svg><use href="#logo"/></svg></a>
+  <nav class="ws" aria-label="Sections">
+    <a href="#overview">1<span>overview</span></a>
+    <a href="#apps">2<span>apps</span></a>
+    <a href="#files">3<span>files</span></a>
+    <a href="#partitions">4<span>partitions</span></a>
+    <a href="#settings">5<span>settings</span></a>
+  </nav>
+  <time id="clock"></time>
+  <div class="tray">
+    <span id="wifi" class="mod" hidden></span>
+    <span id="bat" class="mod" hidden></span>
+    <button id="pwr" class="mod" aria-label="Power" aria-haspopup="menu" aria-expanded="false"><svg class="i"><use href="#i-power"/></svg></button>
+    <div id="pmenu" class="menu" role="menu" hidden>
+      <button data-act="reboot" role="menuitem">restart</button>
+      <a href="/logout" role="menuitem">log out</a>
     </div>
   </div>
-  <div class="card" id="installedAppsCard" style="display:none">
-    <h3>Installed Firmwares</h3>
-    <div class="row" id="installedAppsList"></div>
+</header>
+
+<main>
+  <section class="page ov" data-p="overview" hidden>
+    <article class="win">
+      <h2>system</h2>
+      <div class="ff"><svg class="ffl"><use href="#logo"/></svg><div id="ff"></div></div>
+    </article>
+    <article class="win"><h2>resources</h2><div id="res"></div></article>
+    <article class="win"><h2>apps</h2><ul class="apps" id="ov-apps"></ul></article>
+  </section>
+
+  <section class="page two" data-p="apps" hidden>
+    <article class="win"><h2>installed</h2><ul class="apps" id="apps-list"></ul></article>
+    <article class="win">
+      <h2>install</h2>
+      <label class="drop" id="ota-drop"><input type="file" id="ota-file" accept=".bin"><svg class="i"><use href="#i-install"/></svg><b>drop a firmware .bin here</b><span>or click to choose one</span></label>
+      <div id="ota"></div>
+      <p class="note">Already on the SD card? Find it in <a href="#files">3 files</a> and press <svg class="i"><use href="#i-install"/></svg>.</p>
+      <p class="note">Looking for firmware? <a href="https://bmorcelli.github.io/Launcher/catalog.html" target="_blank" rel="noopener noreferrer">firmware catalog &#8599;</a> (needs internet on this computer)</p>
+    </article>
+  </section>
+
+  <section class="page" data-p="files" hidden>
+    <article class="win fm" id="fm">
+      <h2>files</h2>
+      <div class="tools">
+        <nav class="crumbs" id="crumbs" aria-label="Folder"></nav>
+        <label class="filter"><svg class="i"><use href="#i-search"/></svg><input id="filter" placeholder="filter" spellcheck="false" autocomplete="off" aria-label="Filter this folder"><kbd>/</kbd></label>
+      </div>
+      <div class="tools">
+        <div class="btns">
+          <button data-act="up" title="Up one folder" aria-label="Up one folder"><svg class="i"><use href="#i-up"/></svg></button>
+          <button data-act="ls" title="Refresh" aria-label="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
+          <button data-act="mkdir"><svg class="i"><use href="#i-plus"/></svg>folder</button>
+          <button data-act="mkfile"><svg class="i"><use href="#i-plus"/></svg>file</button>
+          <label class="btn"><input type="file" id="up-files" multiple><svg class="i"><use href="#i-upload"/></svg>upload files</label>
+          <label class="btn"><input type="file" id="up-dir" webkitdirectory multiple><svg class="i"><use href="#i-upload"/></svg>upload folder</label>
+        </div>
+        <div class="sd" id="sd"></div>
+      </div>
+      <table class="list" id="flist"></table>
+      <div class="cover">drop to upload into&nbsp;<b id="cover-dir"></b></div>
+    </article>
+    <article class="win" id="upwin" hidden><h2>uploads</h2><div id="uplist"></div></article>
+  </section>
+
+  <section class="page" data-p="partitions" hidden>
+    <article class="win"><h2>flash</h2><div id="pm-map"></div></article>
+    <article class="win"><h2>partitions</h2><div id="pm-tools"></div><table class="list" id="pm-list"></table></article>
+    <article class="win" id="pm-freewin" hidden><h2>free space</h2><table class="list" id="pm-free"></table></article>
+  </section>
+
+  <section class="page two" data-p="settings" hidden>
+    <article class="win">
+      <h2>display</h2>
+      <div class="field"><label for="s-bright">brightness <output id="s-bright-v"></output></label><input type="range" id="s-bright" min="5" max="100" step="5"></div>
+      <div class="field"><label for="s-dim">dim the screen after</label><select id="s-dim"></select></div>
+      <div class="field"><span class="lbl">colours</span><div class="themes" id="themes"></div></div>
+    </article>
+    <article class="win">
+      <h2>behaviour</h2>
+      <div id="toggles"></div>
+      <div class="field"><label for="s-boot">boot screen shows for</label><select id="s-boot"></select></div>
+    </article>
+    <article class="win">
+      <h2>wifi</h2>
+      <ul class="nets" id="nets"></ul>
+      <form id="netform" class="form" autocomplete="off">
+        <input name="ssid" placeholder="network name" required aria-label="Network name">
+        <input name="pwd" type="password" placeholder="password" autocomplete="new-password" aria-label="Network password">
+        <label class="chk"><input type="checkbox" class="sw" name="open">open network, no password</label>
+        <button class="pri">save network</button>
+      </form>
+    </article>
+    <article class="win">
+      <h2>portal login</h2>
+      <p id="deflogin" class="warn" hidden>Still the default login, admin / launcher. Anyone who can reach this page can sign in with it.</p>
+      <form id="loginform" class="form">
+        <input name="usr" placeholder="username" required autocomplete="username" aria-label="Username">
+        <input name="pwd" type="password" placeholder="new password" required autocomplete="new-password" aria-label="New password">
+        <input name="pwd2" type="password" placeholder="new password again" required autocomplete="new-password" aria-label="New password again">
+        <button class="pri">change login</button>
+      </form>
+    </article>
+    <article class="win">
+      <h2>advanced</h2>
+      <div class="btns">
+        <button data-act="nvs">NVS editor</button>
+        <button data-act="ble">erase BLE bonds</button>
+        <button data-act="sdpins" id="sdpins" hidden>SD card pins</button>
+        <button data-act="reboot" class="dng">restart</button>
+      </div>
+    </article>
+  </section>
+</main>
+
+<div id="toasts" aria-live="polite"></div>
+
+<dialog id="dlg">
+  <form method="dialog">
+    <h3 id="dlg-t"></h3>
+    <div id="dlg-b"></div>
+    <!-- OK comes first so Enter picks it; the CSS shows it last. -->
+    <div class="dlg-btns"><button id="dlg-ok" value="ok">ok</button><button value="" formnovalidate>cancel</button></div>
+  </form>
+</dialog>
+
+<dialog id="ed" class="big" aria-labelledby="ed-t">
+  <div class="dh">
+    <h3 id="ed-t"></h3><span id="ed-m" class="dim"></span>
+    <button data-act="edsave" class="pri">save</button>
+    <button data-act="edclose" class="ab" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
   </div>
-  <div class="card">
-    <form id="save" enctype="multipart/form-data" method="post">
-      <input type="hidden" id="actualFolder" name="actualFolder" value="/">
-    </form>
-    <button class="hbg" onclick="toggleMenu()">&#9776; Menu</button>
-    <div class="row" id="menu">
-      <button onclick="toggleConfigOverlay()">&#9881; Config</button>
-      <button onclick="callOTA()">&#8593; OTA</button>
-      <button onclick="listFilesButton('/')">&#128193; Files</button>
-      <button onclick="loadPartitions()">&#128202; Partitions</button>
-      <button onclick="window.open('https://bmorcelli.github.io/Launcher/catalog.html','_blank','noopener,noreferrer')">Firmware list &#8599;</button>
-    </div>
+  <textarea id="ed-x" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="File contents"></textarea>
+  <div class="df">ctrl+s saves &middot; esc closes &middot; <span id="ed-n"></span></div>
+</dialog>
+
+<dialog id="nvs" class="big" aria-labelledby="nvs-t">
+  <div class="dh">
+    <h3 id="nvs-t">NVS editor</h3>
+    <button data-act="nvssave" class="pri">save</button>
+    <button data-act="nvsclose" class="ab" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
   </div>
-  <div id="status"></div>
-  <div id="detailsheader"></div>
-  <div id="drop-area" class="drop-area"><div id="details"></div></div>
-  <div id="OTAdetails" style="display:none">
-    <input type="file" id="fileInput" onchange="analyzeFile()" style="display:none" accept=".bin">
-    <div id="analysisOutput"></div>
-    <div id="spiffsInfo" style="display:none">
-      <p><b>SPIFFS</b>: Flash file system for ESP32. Some apps like <b>OrcaOne</b> require it.</p>
-    </div>
+  <div id="nvs-b"></div>
+</dialog>
+
+<div id="gone" hidden>
+  <div class="win">
+    <h2>offline</h2>
+    <svg class="gl"><use href="#logo"/></svg>
+    <p id="gone-m"></p>
+    <p class="dim">This page comes back once Web UI is started on the device again.</p>
+    <button class="pri" data-act="reload">reload</button>
   </div>
-  <div id="updetailsheader"></div>
-  <div id="updetails"></div>
 </div>
-<div id="nvs" class="modal">
-  <div class="mhdr">
-    <span class="mtitle">NVS Config</span>
-    <span><button onclick="eraseBleBonds()">&#128279; Erase BLE Bonds</button> <button onclick="saveNvs()">&#128190; Save</button> <button onclick="_('nvs').style.display='none'">&#10006;</button></span>
-  </div>
-  <div id="nvs-body"></div>
-</div>
-<div id="editor" class="modal">
-  <div class="mhdr">
-    <input id="editor-title" class="mtitle" type="text" spellcheck="false">
-    <span><button onclick="saveFile()">&#128190; Save</button> <button onclick="_('editor').style.display='none'">&#10006;</button></span>
-  </div>
-  <textarea id="editor-content"></textarea>
-</div>
-<div id="upmodal">
-  <div id="upbox">
-    <h3>Uploading</h3>
-    <div id="uplist"></div>
-  </div>
-</div>
-<div id="configOverlay" onclick="closeConfigOverlay(event)">
-  <div id="configBox">
-    <div class="mhdr">
-      <span class="mtitle">Config</span>
-      <span><button onclick="toggleConfigOverlay()">&#10006;</button></span>
-    </div>
-    <div class="row" style="flex-direction:column;align-items:stretch">
-      <button onclick="rebootButton()">&#8635; Reboot</button>
-      <button onclick="SDConfig()">SD Pins</button>
-      <button onclick="WifiConfig('ssid')">WiFi</button>
-      <button onclick="WifiConfig('usr')">User/Pass</button>
-      <button onclick="loadNvs()">&#9881; NVS</button>
-      <button onclick="logoutButton()">&#10006; Logout</button>
-    </div>
-  </div>
-</div>
-<div id="pmanResizeOverlay" onclick="closePmanResizeOverlay(event)">
-  <div id="pmanResizeBox">
-    <div class="mhdr">
-      <span id="pmanResizeTitle" class="mtitle">Resize</span>
-      <span><button onclick="pmanResizeConfirm()">&#128190; Apply</button> <button onclick="_('pmanResizeOverlay').classList.remove('open')">&#10006;</button></span>
-    </div>
-    <div id="pmanResizeBody"></div>
-  </div>
-</div>
+
 <script src="scripts.js"></script>
 </body>
 </html>
