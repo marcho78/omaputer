@@ -84,7 +84,10 @@ const int default_webserverporthttp = 80;
 
 Config config;
 httpd_handle_t server = nullptr;
-const char *host = "launcher";
+// The WebUI's mDNS name (<name>.local). A Cardputer uses its model's tag, cardputer or
+// cardputer-adv, so an original and an ADV on one network don't both claim launcher.local.
+// Static, like the literal it replaced, in case mDNS keeps the pointer.
+String webUiHost = "launcher";
 bool webUiApMode = false; // The WebUI runs on the Launcher's own access point, not a network it joined.
 bool shouldReboot = false;
 String uploadFolder = "";
@@ -2246,7 +2249,8 @@ void registerHandler(const char *uri, httpd_method_t method, esp_err_t (*handler
 void configureWebServer() {
     ensurePersistedSessionLoaded();
 
-    launcherMdnsStart(host, config.webserverporthttp);
+    webUiHost = ota_tag.startsWith("cardputer") ? ota_tag : String("launcher");
+    launcherMdnsStart(webUiHost.c_str(), config.webserverporthttp);
 
     registerHandler("/ping", HTTP_GET, pingHandler);
     registerHandler("/login", HTTP_POST, loginHandler);
@@ -2306,7 +2310,7 @@ void startWebUiLoopCommon(bool mode_ap) {
     tft->drawCentreString("-= Launcher WebUI =-", tftWidth / 2, 0, 8);
     // Short panels pull the URL and the body up.
     const bool shortPanel = panelHeight() < 200;
-    tft->drawCentreString("http://launcher.local", tftWidth / 2, shortPanel ? 17 : 22, 1);
+    tft->drawCentreString("http://" + webUiHost + ".local", tftWidth / 2, shortPanel ? 17 : 22, 1);
     setTftDisplay(7, shortPanel ? 26 : 47, ~BGCOLOR, _fp, BGCOLOR);
     tft->setTextSize(_fm);
     tft->print("IP ");
@@ -2318,7 +2322,7 @@ void startWebUiLoopCommon(bool mode_ap) {
     tft->display(false);
 #endif
 
-    launcherConsolePrintln("Access: http://launcher.local");
+    launcherConsolePrintf("Access: http://%s.local\n", webUiHost.c_str());
     launcherConsolePrintf("IP %s\n", txt.c_str());
     launcherConsolePrintf("Usr: %s\n", wui_usr.c_str());
     launcherConsolePrintf("Pwd: %s\n", wui_pwd.c_str());
