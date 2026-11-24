@@ -182,6 +182,7 @@ function renderOverview() {
   const rows = [
     ['launcher', info.VERSION],
     ['device', info.DEVICE],
+    ['time', 'CLOCK' in info ? info.CLOCK || 'not set (5 settings → clock)' : ''],
     ['uptime', info.UPTIME != null ? dur(info.UPTIME) : ''],
     ['wifi', w.ap ? `access point · ${w.ip}` : [w.ssid, w.ip, w.rssi ? w.rssi + ' dBm' : ''].filter(Boolean).join(' · ')],
     ['flash', flash ? `${kb(flashFree)} free for apps, of ${kb(flash)}` : ''],
@@ -638,6 +639,65 @@ const TOGGLES = [
   ['dev', false, 'Developer mode', 'More on the device: Boot Animation in Settings, Wipe Flash memory in the partition manager.'],
 ];
 const rgb = c => `rgb(${(c >> 11 & 31) * 255 / 31 | 0},${(c >> 5 & 63) * 255 / 63 | 0},${(c & 31) * 255 / 31 | 0})`;
+
+// Time zones for the device's clock: [label, POSIX TZ string (what the device runs on), the
+// browser time zones that use it]. "Set from this computer" picks by the browser's zone.
+const ZONES = [
+  ['Honolulu (Hawaii)', 'HST10', 'Pacific/Honolulu'],
+  ['Anchorage (Alaska)', 'AKST9AKDT,M3.2.0,M11.1.0', 'America/Anchorage'],
+  ['Los Angeles (Pacific)', 'PST8PDT,M3.2.0,M11.1.0', 'America/Los_Angeles America/Vancouver America/Tijuana'],
+  ['Phoenix (Arizona)', 'MST7', 'America/Phoenix'],
+  ['Denver (Mountain)', 'MST7MDT,M3.2.0,M11.1.0', 'America/Denver America/Edmonton America/Boise'],
+  ['Chicago (Central)', 'CST6CDT,M3.2.0,M11.1.0', 'America/Chicago America/Winnipeg'],
+  ['Mexico City', 'CST6', 'America/Mexico_City'],
+  ['New York (Eastern)', 'EST5EDT,M3.2.0,M11.1.0', 'America/New_York America/Toronto America/Detroit'],
+  ['Halifax (Atlantic)', 'AST4ADT,M3.2.0,M11.1.0', 'America/Halifax'],
+  ["St. John's (Newfoundland)", 'NST3:30NDT,M3.2.0,M11.1.0', 'America/St_Johns'],
+  ['Sao Paulo', '<-03>3', 'America/Sao_Paulo'],
+  ['Buenos Aires', '<-03>3', 'America/Argentina/Buenos_Aires'],
+  ['UTC', 'UTC0', 'UTC Etc/UTC'],
+  ['London, Dublin', 'GMT0BST,M3.5.0/1,M10.5.0', 'Europe/London Europe/Dublin'],
+  ['Lisbon', 'WET0WEST,M3.5.0/1,M10.5.0', 'Europe/Lisbon'],
+  ['Paris, Berlin, Madrid, Rome', 'CET-1CEST,M3.5.0,M10.5.0/3',
+    'Europe/Paris Europe/Berlin Europe/Madrid Europe/Rome Europe/Amsterdam Europe/Brussels Europe/Vienna Europe/Zurich Europe/Stockholm Europe/Oslo Europe/Copenhagen Europe/Warsaw Europe/Prague Europe/Budapest'],
+  ['Athens, Helsinki, Kyiv', 'EET-2EEST,M3.5.0/3,M10.5.0/4', 'Europe/Athens Europe/Helsinki Europe/Kyiv Europe/Kiev Europe/Bucharest Europe/Sofia'],
+  ['Istanbul', '<+03>-3', 'Europe/Istanbul'],
+  ['Moscow', 'MSK-3', 'Europe/Moscow'],
+  ['Johannesburg', 'SAST-2', 'Africa/Johannesburg'],
+  ['Nairobi', 'EAT-3', 'Africa/Nairobi'],
+  ['Dubai', '<+04>-4', 'Asia/Dubai'],
+  ['Tehran', '<+0330>-3:30', 'Asia/Tehran'],
+  ['Karachi', 'PKT-5', 'Asia/Karachi'],
+  ['India', 'IST-5:30', 'Asia/Kolkata Asia/Calcutta'],
+  ['Kathmandu', '<+0545>-5:45', 'Asia/Kathmandu'],
+  ['Dhaka', '<+06>-6', 'Asia/Dhaka'],
+  ['Bangkok, Jakarta', '<+07>-7', 'Asia/Bangkok Asia/Jakarta Asia/Ho_Chi_Minh'],
+  ['Singapore', '<+08>-8', 'Asia/Singapore Asia/Kuala_Lumpur'],
+  ['Beijing, Shanghai', 'CST-8', 'Asia/Shanghai'],
+  ['Perth', 'AWST-8', 'Australia/Perth'],
+  ['Tokyo', 'JST-9', 'Asia/Tokyo'],
+  ['Seoul', 'KST-9', 'Asia/Seoul'],
+  ['Adelaide', 'ACST-9:30ACDT,M10.1.0,M4.1.0/3', 'Australia/Adelaide'],
+  ['Brisbane', 'AEST-10', 'Australia/Brisbane'],
+  ['Sydney, Melbourne', 'AEST-10AEDT,M10.1.0,M4.1.0/3', 'Australia/Sydney Australia/Melbourne Australia/Hobart'],
+  ['Auckland', 'NZST-12NZDT,M9.5.0,M4.1.0/3', 'Pacific/Auckland'],
+];
+// The browser's zone, if listed; otherwise its current offset with no daylight saving.
+function computerZone() {
+  const iana = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  const listed = ZONES.find(z => z[2].split(' ').includes(iana));
+  if (listed) return { tz: listed[1], fixed: false, iana };
+  const east = -new Date().getTimezoneOffset(), a = Math.abs(east), h = a / 60 | 0, m = a % 60;
+  if (!east) return { tz: 'UTC0', fixed: true, iana };
+  const pad = n => String(n).padStart(2, '0');
+  return { tz: `<${east > 0 ? '+' : '-'}${pad(h)}${m ? pad(m) : ''}>${east > 0 ? '-' : ''}${h}${m ? ':' + pad(m) : ''}`, fixed: true, iana };
+}
+async function syncClock() {
+  const zone = computerZone();
+  if (await saveSetting({ clock: { tz: zone.tz, time: Math.floor(Date.now() / 1000) } }) && zone.fixed) {
+    toast(`${zone.iana || 'This computer\'s time zone'} isn't in the list, so a fixed offset with no daylight saving was used. Pick your zone from the list to get daylight saving.`);
+  }
+}
 let st = null;
 async function loadSettings() {
   try { st = await getJson('/settings'); renderSettings(); } catch (e) { fail(e); }
@@ -692,6 +752,21 @@ function renderSettings() {
   $('#a-saver').hidden = !st.saver;
   $('#a-charge').hidden = !st.charge;
   $('#a-anim').hidden = !st.dev;
+
+  const c = st.clock;
+  $('#clockwin').hidden = !c;
+  if (c) {
+    $('#c-now').textContent = c.local || 'not set';
+    const listed = ZONES.some(z => z[1] === c.tz);
+    $('#c-tz').innerHTML = ZONES.map(([label, tz]) => `<option value="${esc(tz)}"${tz === c.tz ? ' selected' : ''}>${esc(label)}</option>`).join('') +
+      (listed ? '' : `<option value="${esc(c.tz)}" selected>custom: ${esc(c.tz)}</option>`) + '<option value="">other (type a POSIX time zone)</option>';
+    $('#c-tzc').hidden = true;
+    if (document.activeElement !== $('#c-date')) {
+      const d = new Date(), pad = n => String(n).padStart(2, '0');
+      $('#c-date').value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      $('#c-time').value = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+  }
 }
 async function saveSetting(change) {
   try { st = await postJson('/settings', change); renderSettings(); toast('Saved.'); return true; } catch (e) { fail(e); loadSettings(); return false; }
@@ -767,7 +842,7 @@ const ACTIONS = {
   edsave: edSave, edclose: edClose, nvs: openNvs, nvssave: saveNvs, nvsclose: () => $('#nvs').close(),
   ble: eraseBle, sdpins: sdPins,
   screensaver: () => deviceAction('screensaver'), charge: () => deviceAction('charge'), bootanim: () => deviceAction('bootanim'),
-  formatsd: formatSd, reset: resetConfigs, off: turnOff,
+  formatsd: formatSd, reset: resetConfigs, off: turnOff, clocksync: syncClock,
   unbindall: async () => { if (await ask({ title: 'Remove every shortcut?', ok: 'remove all', danger: true })) saveSetting({ unbindAll: true }); },
   xaiclear: async () => { if (await ask({ title: 'Remove the xAI key?', text: "Grok can't connect until a key is saved again.", ok: 'remove', danger: true })) saveSetting({ grok: { clearKey: true } }); },
 };
@@ -842,6 +917,22 @@ $('#hostform').addEventListener('submit', e => {
   saveSetting({ hostname: name });
 });
 $('#keys').addEventListener('click', e => { const b = e.target.closest('[data-unbind]'); if (b) saveSetting({ unbind: b.dataset.unbind }); });
+$('#c-tz').addEventListener('change', e => {
+  if (e.target.value) return saveSetting({ clock: { tz: e.target.value } });
+  $('#c-tzc').hidden = false; // "other": type one
+  $('#c-tzc').focus();
+});
+$('#c-tzc').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const tz = e.target.value.trim();
+  if (!/^[A-Za-z0-9<>+\-:,./]{3,63}$/.test(tz)) return toast("That doesn't look like a POSIX time zone.", true);
+  saveSetting({ clock: { tz } });
+});
+$('#clockform').addEventListener('submit', e => {
+  e.preventDefault();
+  saveSetting({ clock: { local: `${$('#c-date').value}T${$('#c-time').value}` } });
+});
 $('#g-duo').addEventListener('change', e => saveSetting({ grok: { duo: e.target.checked } }));
 $('#g-muted').addEventListener('change', e => saveSetting({ grok: { muted: e.target.checked } }));
 $('#grokform').addEventListener('submit', e => {

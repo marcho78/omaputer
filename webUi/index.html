@@ -152,6 +152,20 @@
         <button class="pri">change login</button>
       </form>
     </article>
+    <article class="win" id="clockwin" hidden>
+      <h2>clock</h2>
+      <p class="clocknow"><span class="dim">on the device</span> <b id="c-now"></b></p>
+      <div class="field">
+        <label for="c-tz">time zone</label><select id="c-tz"></select>
+        <input id="c-tzc" hidden spellcheck="false" autocomplete="off" maxlength="63" placeholder="POSIX time zone, like CET-1CEST,M3.5.0,M10.5.0/3" aria-label="Custom time zone">
+      </div>
+      <div class="btns"><button class="pri" data-act="clocksync">set from this computer</button></div>
+      <form id="clockform" class="form">
+        <label class="lbl" for="c-date">or set it by hand, in that time zone</label>
+        <div class="host"><input type="date" id="c-date" required aria-label="Date"><input type="time" id="c-time" required aria-label="Time"><button>set</button></div>
+      </form>
+      <p class="note">With WiFi the device also sets its clock from the internet. It forgets the time when it's switched off.</p>
+    </article>
     <article class="win" id="keyswin" hidden>
       <h2>shortcuts</h2>
       <ul class="nets" id="keys"></ul>

@@ -14,6 +14,9 @@
 #include "mykeyboard.h"
 #include "nvs.h"
 #include "nvs_helpers.h"
+#if defined(OMARCHY_CLOCK)
+#include "omarchy_clock.h"
+#endif
 #if defined(OMARCHY_GROK)
 #include "omarchy_grok.h"
 #endif
@@ -1340,6 +1343,9 @@ esp_err_t systemInfoHandler(httpd_req_t *req) {
 #if defined(HAS_KEYBOARD)
     doc["KEYS"] = true; // .bin files can be bound to a key.
 #endif
+#if defined(OMARCHY_CLOCK)
+    doc["CLOCK"] = omarchyClockDateTime(); // Empty until the clock is set.
+#endif
 
     String json;
     serializeJson(doc, json);
@@ -2242,6 +2248,20 @@ esp_err_t settingsHandler(httpd_req_t *req) {
         if (incoming["unbind"].is<const char *>()) removeKeyBinding(incoming["unbind"].as<const char *>());
         if (incoming["unbindAll"].as<bool>()) clearKeyBindings();
 #endif
+#if defined(OMARCHY_CLOCK)
+        // The time zone first, so a local date and time is read in the new one.
+        if (incoming["clock"].is<JsonObject>()) {
+            JsonObjectConst clock = incoming["clock"];
+            if (clock["tz"].is<const char *>() && !omarchyClockSetTimeZone(clock["tz"].as<const char *>())) {
+                error = "That isn't a time zone the device understands";
+            } else if (clock["time"].is<long long>() &&
+                       !omarchyClockSetUtc(static_cast<time_t>(clock["time"].as<long long>()))) {
+                error = "That isn't a usable time";
+            } else if (clock["local"].is<const char *>() && !omarchyClockSetLocal(clock["local"].as<const char *>())) {
+                error = "That isn't a usable date and time";
+            }
+        }
+#endif
 #if defined(OMARCHY_GROK)
         if (incoming["grok"].is<JsonObject>()) {
             const String grokError = omarchyGrokApplySettings(incoming["grok"].as<JsonObjectConst>());
@@ -2297,6 +2317,11 @@ esp_err_t settingsHandler(httpd_req_t *req) {
 #endif
 #if defined(OMARCHY_GROK)
     omarchyGrokSettingsJson(doc["grok"].to<JsonObject>());
+#endif
+#if defined(OMARCHY_CLOCK)
+    JsonObject clock = doc["clock"].to<JsonObject>();
+    clock["local"] = omarchyClockDateTime(); // Empty until the clock is set.
+    clock["tz"] = omarchyClockTimeZone();
 #endif
 #if defined(OMARCHY_SCREENSAVER)
     doc["saver"] = true; // The device actions this build has.

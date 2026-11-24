@@ -233,6 +233,10 @@ kbd { padding: 0 5px; font: inherit; font-size: 11px; color: var(--dim); border:
 .host input { flex: 1; min-width: 0; }
 .host .dim { margin-left: -4px; }
 #s-host-note { margin: 6px 0 0; }
+.clocknow { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 14px; }
+.clocknow b { font-weight: 400; color: var(--hi); }
+#c-tzc { margin-top: 6px; }
+#clockwin .btns { margin-bottom: 14px; }
 .dz { margin-top: 12px; padding-top: 12px; border-top: 1px dashed #1d544266; }
 #keys .k { flex: none; min-width: 1.8em; text-align: center; color: var(--ac); border: 1px solid var(--mute); }
 .chk { display: flex; align-items: center; gap: 8px; color: var(--fg2); cursor: pointer; }

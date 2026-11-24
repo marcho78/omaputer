@@ -53,6 +53,11 @@ const RESERVED_KEYS = ',;/\\`.';
 const GROK_VOICES = ['ara', 'eve', 'leo', 'rex', 'sal', 'altair', 'atlas', 'carina', 'castor', 'celeste', 'cosmo', 'helios',
   'helix', 'iris', 'kepler', 'lumen', 'luna', 'lux', 'naksh', 'orion', 'perseus', 'rigel', 'sirius', 'ursa', 'zagan', 'zenith'];
 const grok = { duo: false, name: '', persona: '', voice: 'ara', muted: false, key: '' };
+// The device clock: its offset from this machine's clock, unset until set; the zone is kept
+// as text (the dates below use this machine's own zone, which is enough for a fake).
+const clock = { offset: null, tz: 'PST8PDT,M3.2.0,M11.1.0' };
+const clockText = () => clock.offset === null ? '' : new Date(Date.now() + clock.offset * 1000).toLocaleString('en-US',
+  { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 function settingsView() {
   return {
     ...settings, wui_usr: USERNAME, defaultLogin: USERNAME === 'admin' && PASSWORD === 'launcher',
@@ -60,6 +65,7 @@ function settingsView() {
     rotation, rotations: ROTATIONS, hostname, hostAuto: HOST_AUTO, hostNow: hostname || HOST_AUTO,
     shortcuts: { ...shortcuts },
     grok: { duo: grok.duo, name: grok.name, persona: grok.persona, voice: grok.voice, muted: grok.muted, hasKey: !!grok.key, voices: GROK_VOICES },
+    clock: { local: clockText(), tz: clock.tz },
     saver: true, charge: true,
   };
 }
@@ -86,6 +92,22 @@ function applySettings(incoming) {
   }
   if (typeof incoming.unbind === 'string') delete shortcuts[incoming.unbind];
   if (incoming.unbindAll === true) for (const k of Object.keys(shortcuts)) delete shortcuts[k];
+  const c = incoming.clock;
+  if (c && typeof c === 'object') {
+    if (typeof c.tz === 'string') {
+      if (c.tz && !/^[A-Za-z0-9<>+\-:,./]{1,63}$/.test(c.tz)) return "That isn't a time zone the device understands";
+      clock.tz = c.tz || 'PST8PDT,M3.2.0,M11.1.0';
+    }
+    if (Number.isInteger(c.time)) {
+      if (c.time < 1700000000) return "That isn't a usable time";
+      clock.offset = c.time - Math.floor(Date.now() / 1000);
+    }
+    if (typeof c.local === 'string') {
+      const t = Date.parse(c.local);
+      if (!(t / 1000 >= 1700000000)) return "That isn't a usable date and time";
+      clock.offset = Math.floor((t - Date.now()) / 1000);
+    }
+  }
   const g = incoming.grok;
   if (g && typeof g === 'object') {
     if (typeof g.duo === 'boolean') grok.duo = g.duo;
@@ -747,6 +769,7 @@ const server = http.createServer(async (req, res) => {
       CHARGING: false,
       WIFI: { ap: false, ip: '192.168.1.42', ssid: 'MyNetwork', rssi: -58 },
       KEYS: true,
+      CLOCK: clockText(),
     });
     return sendJson(body);
   }
