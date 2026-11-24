@@ -8,7 +8,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};
 const ico = n => `<svg class="i"><use href="#i-${n}"/></svg>`;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const hex = n => '0x' + n.toString(16).toUpperCase();
-const kb = n => n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B';
+const kb = n => n >= 1073741824 ? +(n / 1073741824).toFixed(1) + ' GB' : n >= 1048576 ? +(n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B';
 const psize = n => n >= 1048576 ? +(n / 1048576).toFixed(2) + ' MB' : n >= 1024 ? +(n / 1024).toFixed(2) + ' KB' : n + ' B';
 const dur = s => { const d = s / 86400 | 0, h = s / 3600 % 24 | 0, m = s / 60 % 60 | 0; return (d ? d + 'd ' : '') + (d || h ? h + 'h ' : '') + m + 'm'; };
 
@@ -176,12 +176,15 @@ function meter(label, fraction, text, low) {
 
 function renderOverview() {
   const sd = info.SD || {}, w = info.WIFI || {}, name = (info.DEVICE || 'device').toLowerCase().replace(/\s+/g, '-');
+  // Flash is where installed apps live; its free ranges come from the partition table.
+  const flash = pm && pm.flashSize, flashFree = pm ? (pm.freeRanges || []).reduce((n, r) => n + r.size, 0) : 0;
   const rows = [
     ['launcher', info.VERSION],
     ['device', info.DEVICE],
     ['uptime', info.UPTIME != null ? dur(info.UPTIME) : ''],
     ['wifi', w.ap ? `access point · ${w.ip}` : [w.ssid, w.ip, w.rssi ? w.rssi + ' dBm' : ''].filter(Boolean).join(' · ')],
-    ['memory', info.HEAP ? `${kb(info.HEAP)} free of ${kb(info.HEAP_TOTAL)}` : ''],
+    ['flash', flash ? `${kb(flashFree)} free for apps, of ${kb(flash)}` : ''],
+    ['ram', info.HEAP ? `${kb(info.HEAP)} free of ${kb(info.HEAP_TOTAL)}` : ''],
     ['sd card', sd.totalBytes ? `${sd.used} used of ${sd.total}` : 'none'],
     ['battery', info.BATTERY > 0 ? info.BATTERY + '%' + (info.CHARGING ? ', charging' : '') : ''],
   ].filter(r => r[1]);
@@ -190,8 +193,9 @@ function renderOverview() {
     '<dl>' + rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('') + '</dl>' +
     '<div class="swatch">' + ['ff3b6b', '00ff9c', 'e6ff5a', '20b8ff', 'ff2bd6', '00e5ff', 'b6f5d2', '3f7d64'].map(c => `<i style="background:#${c}"></i>`).join('') + '</div>';
   $('#res').innerHTML =
+    (flash ? meter('flash', 1 - flashFree / flash, `${kb(flash - flashFree)} / ${kb(flash)}`) : '') +
     meter('sd card', sd.usedBytes / sd.totalBytes, sd.totalBytes ? `${sd.used} / ${sd.total}` : 'no card') +
-    (info.HEAP_TOTAL ? meter('memory', 1 - info.HEAP / info.HEAP_TOTAL, `${kb(info.HEAP_TOTAL - info.HEAP)} / ${kb(info.HEAP_TOTAL)}`) : '') +
+    (info.HEAP_TOTAL ? meter('ram', 1 - info.HEAP / info.HEAP_TOTAL, `${kb(info.HEAP_TOTAL - info.HEAP)} / ${kb(info.HEAP_TOTAL)}`) : '') +
     (info.BATTERY > 0 ? meter('battery', info.BATTERY / 100, info.BATTERY + '%' + (info.CHARGING ? ' +' : ''), true) : '');
 }
 
@@ -338,6 +342,7 @@ async function installBin() {
     busy--;
   }
   status();
+  loadParts(); // the install took flash
 }
 
 // ── Files on the SD card ─────────────────────────────────────────────────────────────────
@@ -527,7 +532,11 @@ async function edClose() {
 // ── Partitions ───────────────────────────────────────────────────────────────────────────
 let pm = null;
 async function loadParts() {
-  try { pm = await getJson('/partitions'); renderParts(); } catch (e) { fail(e); }
+  try {
+    pm = await getJson('/partitions');
+    renderParts();
+    if (info) renderOverview();
+  } catch (e) { fail(e); }
 }
 function renderParts() {
   const items = [...pm.entries].sort((a, b) => a.offset - b.offset);
@@ -824,4 +833,5 @@ tick();
 setInterval(tick, 10000);
 route();
 status();
+if (page !== 'partitions') loadParts(); // route() already loads it there; the overview shows flash use
 setInterval(() => { if (!document.hidden) status(); }, 30000);
