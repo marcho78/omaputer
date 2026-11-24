@@ -79,7 +79,7 @@ function ask({ title, text = '', fields = [], ok = 'ok', danger = false }) {
     const id = 'f' + i, label = `<label for="${id}">${esc(f.label)}${f.type === 'range' ? `<output id="${id}o"></output>` : ''}</label>`;
     if (f.options) return label + `<select id="${id}">${f.options.map(o => `<option value="${esc(o.value)}"${o.value === f.value ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
     if (f.type === 'range') return label + `<input id="${id}" type="range" min="${f.min}" max="${f.max}" step="${f.step}" value="${f.value}">`;
-    return label + `<input id="${id}" type="${f.type || 'text'}" value="${esc(f.value)}" required spellcheck="false" autocomplete="off">`;
+    return label + `<input id="${id}" type="${f.type || 'text'}" value="${esc(f.value)}"${f.max ? ` maxlength="${f.max}"` : ''} required spellcheck="false" autocomplete="off">`;
   }).join('');
   okBtn.textContent = ok;
   okBtn.className = danger ? 'dng' : 'pri';
@@ -152,6 +152,7 @@ async function status() {
   renderApps();
   renderSd();
   $('#sdpins').hidden = !info.HEADLESS;
+  if (filesLoaded && info.KEYS && !document.querySelector('#flist [data-a=key]')) renderFiles(); // adds the key buttons
 }
 
 function renderBar() {
@@ -383,7 +384,8 @@ function renderFiles() {
       // Folders open and text files edit from their name; other names are plain text.
       return `<tr data-i="${i}"><td class="ic ${kind}">${ico(e.dir ? 'dir' : bin ? 'chip' : 'file')}</td>` +
         `<td class="nm">${e.dir || text ? `<a href="#files" class="${kind}">${name}</a>` : `<span class="${kind}">${name}</span>`}</td><td class="sz">${esc(e.size)}</td><td class="ac">` +
-        (bin ? rowBtn('install', 'Install on the device') : '') + (text ? rowBtn('edit', 'Edit') : '') + (e.dir ? '' : rowBtn('download', 'Download')) +
+        (bin ? rowBtn('install', 'Install on the device') : '') + (bin && info && info.KEYS ? rowBtn('key', 'Bind to a key') : '') +
+        (text ? rowBtn('edit', 'Edit') : '') + (e.dir ? '' : rowBtn('download', 'Download')) +
         rowBtn('rename', 'Rename') + rowBtn('trash', 'Delete', 'del') + '</td></tr>';
     }).join('') +
     (shown.length ? '' : `<tr><td></td><td class="empty" colspan="3">${q ? 'Nothing here matches.' : 'This folder is empty.'}</td></tr>`);
@@ -406,6 +408,13 @@ async function fileAction(act, e) {
     if (act === 'install') {
       if (!await ask({ title: `Install ${e.name}?`, text: `The ${dev} installs it from the SD card and shows the progress on its screen. Restart it when it says so.`, ok: 'install' })) return;
       return toast(await post('/UPDATE', { fileName: e.path }));
+    }
+    if (act === 'key') {
+      // Like the device's SD browser "Bind to key": that key in the main menu installs and starts it.
+      const v = await ask({ title: `Bind ${e.name} to a key`, text: "Pressing that key in the Launcher's main menu then installs and starts it.", fields: [{ name: 'k', label: 'key', max: 1 }], ok: 'bind' });
+      if (!v) return;
+      st = await postJson('/settings', { bind: { key: v.k, path: e.path } });
+      return toast(`'${v.k.toLowerCase()}' now starts ${e.name}`);
     }
     if (act === 'rename') {
       const v = await ask({ title: 'Rename', fields: [{ name: 'n', label: 'new name', value: e.name, stem: !e.dir }], ok: 'rename' });
@@ -626,6 +635,7 @@ const TOGGLES = [
   ['autoBackup', false, 'Auto backup', "Offer to back up an app's data partition before the app is removed."],
   ['askSpiffs', false, 'Ask to copy SPIFFS', 'Ask whether to copy a SPIFFS partition when installing. Off: it is never copied.'],
   ['DDLB', true, 'DeepSleep starts Launcher', 'Waking from deep sleep opens the Launcher.'],
+  ['dev', false, 'Developer mode', 'More on the device: Boot Animation in Settings, Wipe Flash memory in the partition manager.'],
 ];
 const rgb = c => `rgb(${(c >> 11 & 31) * 255 / 31 | 0},${(c >> 5 & 63) * 255 / 63 | 0},${(c & 31) * 255 / 31 | 0})`;
 let st = null;
@@ -648,9 +658,61 @@ function renderSettings() {
   $('#deflogin').hidden = !st.defaultLogin;
   const usr = $('#loginform').usr;
   if (document.activeElement !== usr) usr.value = st.wui_usr;
+
+  // The device menu lists its mounting rotation twice (Default and its own kind); once here.
+  const rots = (st.rotations || []).filter((r, i, all) => all.findIndex(x => x.value === r.value) === i);
+  $('#s-rot').innerHTML = rots.map(r =>
+    `<option value="${r.value}"${r.value === st.rotation ? ' selected' : ''}>${r.kind === 'Default' ? `default (${r.value})` : r.kind.toLowerCase() + ' ' + r.value}</option>`).join('');
+
+  const host = $('#s-host');
+  if (document.activeElement !== host) host.value = st.hostname || '';
+  host.placeholder = st.hostAuto || '';
+  $('#s-host-note').innerHTML = `Answers to <a href="http://${esc(st.hostNow)}.local/">http://${esc(st.hostNow)}.local</a>. Leave it empty for the automatic name, ${esc(st.hostAuto)}.`;
+
+  const keys = st.shortcuts ? Object.entries(st.shortcuts) : null;
+  $('#keyswin').hidden = !keys;
+  if (keys) {
+    $('#keys').innerHTML = keys.length
+      ? keys.map(([k, path]) => `<li><span class="k">${esc(k)}</span><span>${esc(path)}</span><button class="ab del" data-unbind="${esc(k)}" title="Remove" aria-label="Remove the ${esc(k)} shortcut">${ico('trash')}</button></li>`).join('')
+      : '<li class="empty">No shortcuts yet.</li>';
+    $('#unbindall').hidden = !keys.length;
+  }
+
+  const g = st.grok;
+  $('#grokwin').hidden = !g;
+  if (g) {
+    $('#g-duo').checked = g.duo;
+    $('#g-muted').checked = g.muted;
+    for (const [id, value] of [['#g-name', g.name], ['#g-persona', g.persona]]) if (document.activeElement !== $(id)) $(id).value = value;
+    $('#g-voice').innerHTML = g.voices.map(v => `<option value="${esc(v)}"${v === g.voice ? ' selected' : ''}>${esc(v[0].toUpperCase() + v.slice(1))}</option>`).join('');
+    $('#g-keystate').textContent = g.hasKey ? 'saved' : 'not set';
+    $('#g-clear').hidden = !g.hasKey;
+  }
+
+  $('#a-saver').hidden = !st.saver;
+  $('#a-charge').hidden = !st.charge;
+  $('#a-anim').hidden = !st.dev;
 }
 async function saveSetting(change) {
-  try { st = await postJson('/settings', change); renderSettings(); toast('Saved.'); } catch (e) { fail(e); loadSettings(); }
+  try { st = await postJson('/settings', change); renderSettings(); toast('Saved.'); return true; } catch (e) { fail(e); loadSettings(); return false; }
+}
+
+// The Settings menu's device actions (actionHandler on the device).
+async function deviceAction(what) {
+  busy++; // formatting can take a while; nothing else is sent meanwhile
+  try { toast(await post('/action', { do: what })); return true; } catch (e) { fail(e); return false; } finally { busy--; }
+}
+async function formatSd() {
+  if (!await ask({ title: 'Format the SD card?', text: `Only a card the ${dev} can't read is formatted: a new card, or one formatted for a computer. A readable card is left as it is.`, ok: 'format', danger: true })) return;
+  if (await deviceAction('formatsd')) { status(); if (filesLoaded) ls('/'); }
+}
+async function resetConfigs() {
+  if (!await ask({ title: 'Reset configs and WiFi?', text: 'Every setting goes back to its default, saved WiFi networks are forgotten, the login becomes admin / launcher, the network name goes back to automatic and the xAI key is erased. The SD card\'s config file is backed up first.', ok: 'reset', danger: true })) return;
+  if (await deviceAction('reset')) loadSettings();
+}
+async function turnOff() {
+  if (!await ask({ title: `Turn off the ${dev}?`, text: 'This page goes offline. Turn it on with its power switch or G0 button.', ok: 'turn off', danger: true })) return;
+  if (await deviceAction('off')) offline(`The ${dev} is off.`);
 }
 
 // ── NVS editor ───────────────────────────────────────────────────────────────────────────
@@ -704,6 +766,10 @@ const ACTIONS = {
   otago: installBin, otacancel: () => { otaPending = null; $('#ota').innerHTML = ''; },
   edsave: edSave, edclose: edClose, nvs: openNvs, nvssave: saveNvs, nvsclose: () => $('#nvs').close(),
   ble: eraseBle, sdpins: sdPins,
+  screensaver: () => deviceAction('screensaver'), charge: () => deviceAction('charge'), bootanim: () => deviceAction('bootanim'),
+  formatsd: formatSd, reset: resetConfigs, off: turnOff,
+  unbindall: async () => { if (await ask({ title: 'Remove every shortcut?', ok: 'remove all', danger: true })) saveSetting({ unbindAll: true }); },
+  xaiclear: async () => { if (await ask({ title: 'Remove the xAI key?', text: "Grok can't connect until a key is saved again.", ok: 'remove', danger: true })) saveSetting({ grok: { clearKey: true } }); },
 };
 document.addEventListener('click', e => {
   if (!e.target.closest('#pwr')) $('#pmenu').hidden = true;
@@ -768,6 +834,26 @@ $('#s-bright').addEventListener('input', e => { $('#s-bright-v').textContent = e
 $('#s-bright').addEventListener('change', e => saveSetting({ bright: +e.target.value }));
 $('#s-dim').addEventListener('change', e => saveSetting({ dimmerSet: +e.target.value }));
 $('#s-boot').addEventListener('change', e => saveSetting({ bootTimer: +e.target.value }));
+$('#s-rot').addEventListener('change', e => saveSetting({ rotation: +e.target.value }));
+$('#hostform').addEventListener('submit', e => {
+  e.preventDefault();
+  const name = $('#s-host').value.trim().toLowerCase();
+  if (name && !/^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/.test(name)) return toast('A name can only have letters, digits and hyphens, not at either end.', true);
+  saveSetting({ hostname: name });
+});
+$('#keys').addEventListener('click', e => { const b = e.target.closest('[data-unbind]'); if (b) saveSetting({ unbind: b.dataset.unbind }); });
+$('#g-duo').addEventListener('change', e => saveSetting({ grok: { duo: e.target.checked } }));
+$('#g-muted').addEventListener('change', e => saveSetting({ grok: { muted: e.target.checked } }));
+$('#grokform').addEventListener('submit', e => {
+  e.preventDefault();
+  saveSetting({ grok: { name: $('#g-name').value, persona: $('#g-persona').value, voice: $('#g-voice').value } });
+});
+$('#xaiform').addEventListener('submit', async e => {
+  e.preventDefault();
+  const key = $('#g-key').value.trim();
+  if (!key) return toast('Paste the key first.', true);
+  if (await saveSetting({ grok: { key } })) $('#g-key').value = '';
+});
 $('#themes').addEventListener('click', e => {
   const b = e.target.closest('[data-th]');
   if (!b) return;

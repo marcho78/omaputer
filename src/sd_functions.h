@@ -19,6 +19,15 @@ bool setupSdCard();
 // readable card is mounted afterwards.
 bool formatSdCard();
 
+// The same without asking or drawing, for the WebUI, whose page has asked already. A
+// readable card is never formatted. Returns what happened, for the user.
+String formatSdCardIfUnreadable();
+
+#if defined(HAS_KEYBOARD)
+// Keys the menus navigate with, which can't launch a file (RESERVED_NAV_KEYS).
+bool isReservedBindKey(char c);
+#endif
+
 bool deleteFromSd(const String &path);
 
 bool renameFile(const String &path, const String &filename);

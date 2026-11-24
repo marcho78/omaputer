@@ -34,6 +34,14 @@ void setBrightnessMenu();
 void setBrightness(int bright, bool save = true);
 void getBrightness();
 int gsetRotation(bool set = false);
+// The rotations Settings > Orientation offers on this panel, the mounting rotation first.
+struct RotationChoice {
+    int value;
+    const char *kind; // "Default", "Portrait" or "Landscape"
+};
+std::vector<RotationChoice> rotationChoices();
+// Turns the screen to one of those and resizes the drawing area to match; the caller saves.
+void applyRotation(int value);
 void getConfigs();
 void saveConfigs();
 bool saveIntoNVS();
@@ -58,6 +66,8 @@ void setdimmerSet();
 void setBootTimer();
 void setUiColor();
 void chargeMode();
+// Settings > Reset Configs/Wifi without its question, for the WebUI, whose page has asked.
+void factoryResetNow();
 JsonObject ensureSettingsRoot();
 bool saveSessionToken(const String &token);
 String loadSessionToken();

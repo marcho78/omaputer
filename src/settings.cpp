@@ -131,6 +131,11 @@ void factoryReset() {
     };
     loopOptions(options);
     if (!confirmed) return;
+    factoryResetNow();
+}
+} // namespace
+
+void factoryResetNow() {
     lnvs::eraseNamespace("l_wifi");
     lnvs::eraseNamespace("launcher");
     backupConfigFileIfPresent();
@@ -140,7 +145,6 @@ void factoryReset() {
     defaultValues();
     saveConfigs();
 }
-} // namespace
 
 bool eraseNamespace(const char *ns) { return lnvs::eraseNamespace(ns); }
 
@@ -812,6 +816,48 @@ void getBrightness() {
 **  Function: gsetRotation
 **  get onlyBins from EEPROM
 **********************************************************************/
+std::vector<RotationChoice> rotationChoices() {
+    const int DRV = (displayConfig.width < displayConfig.height) ? 1 : 0;
+    const bool offerPortrait = panelWidth() >= 200 && panelHeight() >= 200;
+    // The four rotations this panel can take, in its own family.
+    const int landscapeA = DRV + ROT_OFFSET;
+    const int landscapeB = DRV + 2 + ROT_OFFSET;
+    const int portraitA = (DRV == 1 ? 0 : 1) + ROT_OFFSET;
+    const int portraitB = (DRV == 1 ? 2 : 3) + ROT_OFFSET;
+    std::vector<RotationChoice> choices = {
+        {displayConfig.rotation, "Default"}
+    };
+    if (offerPortrait) choices.push_back({portraitA, "Portrait"});
+    choices.push_back({landscapeA, "Landscape"});
+    if (offerPortrait) choices.push_back({portraitB, "Portrait"});
+    choices.push_back({landscapeB, "Landscape"});
+    return choices;
+}
+
+void applyRotation(int value) {
+    rotation = value;
+
+    // See the same block in main.cpp: the panel size is runtime state now.
+    if (rotation & 0b1) {
+#if defined(HAS_TOUCH) && !defined(HAS_TOUCH_NO_BORDER)
+        tftHeight = displayConfig.width - (_fm * LH + 4);
+#else
+        tftHeight = displayConfig.width;
+#endif
+        tftWidth = displayConfig.height;
+    } else {
+#if defined(HAS_TOUCH) && !defined(HAS_TOUCH_NO_BORDER)
+        tftHeight = displayConfig.height - (_fm * LH + 4);
+#else
+        tftHeight = displayConfig.height;
+#endif
+        tftWidth = displayConfig.width;
+    }
+
+    tft->setRotation(value);
+    tft->fillScreen(BGCOLOR);
+}
+
 int gsetRotation(bool set) {
 
     const int mountRotation = displayConfig.rotation;
@@ -827,52 +873,18 @@ int gsetRotation(bool set) {
     } else result = rotation;
 
     if (set) {
-        const int DRV = (displayConfig.width < displayConfig.height) ? 1 : 0;
-        const bool offerPortrait = panelWidth() >= 200 && panelHeight() >= 200;
-        // The four rotations this panel can take, in its own family.
-        const int landscapeA = DRV + ROT_OFFSET;
-        const int landscapeB = DRV + 2 + ROT_OFFSET;
-        const int portraitA = (DRV == 1 ? 0 : 1) + ROT_OFFSET;
-        const int portraitB = (DRV == 1 ? 2 : 3) + ROT_OFFSET;
-        options = {
-            {"Default (" + String(mountRotation) + ")", [&]() { result = mountRotation; }}
-        };
-        if (offerPortrait)
+        options = {};
+        for (const RotationChoice &choice : rotationChoices()) {
+            const int value = choice.value;
+            const bool isDefault = String(choice.kind) == "Default";
             options.push_back(
-                {"Portrait " + String(portraitA), [&]() { result = portraitA; }, _CLR_(rotation, portraitA)}
+                {String(choice.kind) + (isDefault ? " (" + String(value) + ")" : " " + String(value)),
+                 [&result, value]() { result = value; },
+                 isDefault ? NO_COLOR : _CLR_(rotation, value)}
             );
-        options.push_back(
-            {"Landscape " + String(landscapeA), [&]() { result = landscapeA; }, _CLR_(rotation, landscapeA)}
-        );
-        if (offerPortrait)
-            options.push_back(
-                {"Portrait " + String(portraitB), [&]() { result = portraitB; }, _CLR_(rotation, portraitB)}
-            );
-        options.push_back(
-            {"Landscape " + String(landscapeB), [&]() { result = landscapeB; }, _CLR_(rotation, landscapeB)}
-        );
-        loopOptions(options);
-        rotation = result;
-
-        // See the same block in main.cpp: the panel size is runtime state now.
-        if (rotation & 0b1) {
-#if defined(HAS_TOUCH) && !defined(HAS_TOUCH_NO_BORDER)
-            tftHeight = displayConfig.width - (_fm * LH + 4);
-#else
-            tftHeight = displayConfig.width;
-#endif
-            tftWidth = displayConfig.height;
-        } else {
-#if defined(HAS_TOUCH) && !defined(HAS_TOUCH_NO_BORDER)
-            tftHeight = displayConfig.height - (_fm * LH + 4);
-#else
-            tftHeight = displayConfig.height;
-#endif
-            tftWidth = displayConfig.width;
         }
-
-        tft->setRotation(result);
-        tft->fillScreen(BGCOLOR);
+        loopOptions(options);
+        applyRotation(result);
     }
     return result;
 }

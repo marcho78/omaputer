@@ -39,14 +39,64 @@ function saveNvs() { fs.writeFileSync(NVS_FILE, JSON.stringify(nvs, null, 2)); }
 const settings = {
   bright: 100, dimmerSet: 0, onlyBins: true, noDotFiles: true, autoBackup: true, askSpiffs: true, autoConnect: false,
   bootToApp: false, bootTimer: 4, DDLB: false, FGCOLOR: 0x07F3, BGCOLOR: 0x0041, ALCOLOR: 0xB7BA, odd: 0x30C5, even: 0x32E5,
+  dev: false,
 };
 const wifiNetworks = [{ ssid: 'MyNetwork', pwd: 'secret' }, { ssid: 'Cafe', pwd: '' }];
 const startedAt = Date.now();
+// A Cardputer's screen: its mounting rotation (Default) and the two landscapes; no portrait.
+const ROTATIONS = [{ value: 1, kind: 'Default' }, { value: 1, kind: 'Landscape' }, { value: 3, kind: 'Landscape' }];
+let rotation = 1;
+let hostname = '';               // '' = the automatic name
+const HOST_AUTO = 'cardputer';
+const shortcuts = { b: '/apps/launcher-app.bin' };
+const RESERVED_KEYS = ',;/\\`.';
+const GROK_VOICES = ['ara', 'eve', 'leo', 'rex', 'sal', 'altair', 'atlas', 'carina', 'castor', 'celeste', 'cosmo', 'helios',
+  'helix', 'iris', 'kepler', 'lumen', 'luna', 'lux', 'naksh', 'orion', 'perseus', 'rigel', 'sirius', 'ursa', 'zagan', 'zenith'];
+const grok = { duo: false, name: '', persona: '', voice: 'ara', muted: false, key: '' };
 function settingsView() {
   return {
     ...settings, wui_usr: USERNAME, defaultLogin: USERNAME === 'admin' && PASSWORD === 'launcher',
     wifi: wifiNetworks.map(n => ({ ssid: n.ssid, pwd: !!n.pwd })),
+    rotation, rotations: ROTATIONS, hostname, hostAuto: HOST_AUTO, hostNow: hostname || HOST_AUTO,
+    shortcuts: { ...shortcuts },
+    grok: { duo: grok.duo, name: grok.name, persona: grok.persona, voice: grok.voice, muted: grok.muted, hasKey: !!grok.key, voices: GROK_VOICES },
+    saver: true, charge: true,
   };
+}
+// Mirrors settingsHandler's POST: returns an error message, or '' when everything applied.
+function applySettings(incoming) {
+  for (const k of Object.keys(settings)) if (k in incoming) settings[k] = incoming[k];
+  if (settings.dimmerSet > 120) settings.dimmerSet = 10;
+  if (Number.isInteger(incoming.rotation)) {
+    if (!ROTATIONS.some(r => r.value === incoming.rotation)) return "That orientation isn't offered on this screen";
+    rotation = incoming.rotation;
+  }
+  if (typeof incoming.hostname === 'string') {
+    const name = incoming.hostname.trim().toLowerCase();
+    if (name && !/^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/.test(name)) return 'A name can only have letters, digits and hyphens, not at either end';
+    hostname = name;
+  }
+  if (incoming.bind && typeof incoming.bind === 'object') {
+    const key = String(incoming.bind.key || '').toLowerCase(), p = String(incoming.bind.path || '');
+    if (key.length !== 1 || key <= ' ' || key > '~') return 'Pick one key';
+    if (RESERVED_KEYS.includes(key)) return 'That key moves around the menus';
+    const abs = toAbsPath(p);
+    if (!/\.bin$/i.test(p) || !abs || !fs.existsSync(abs)) return 'Pick a .bin file on the SD card';
+    shortcuts[key] = p;
+  }
+  if (typeof incoming.unbind === 'string') delete shortcuts[incoming.unbind];
+  if (incoming.unbindAll === true) for (const k of Object.keys(shortcuts)) delete shortcuts[k];
+  const g = incoming.grok;
+  if (g && typeof g === 'object') {
+    if (typeof g.duo === 'boolean') grok.duo = g.duo;
+    if (typeof g.muted === 'boolean') grok.muted = g.muted;
+    if (typeof g.name === 'string') grok.name = g.name.trim().slice(0, 24);
+    if (typeof g.persona === 'string') grok.persona = g.persona.trim().slice(0, 120);
+    if (typeof g.voice === 'string') { if (!GROK_VOICES.includes(g.voice)) return 'Unknown voice'; grok.voice = g.voice; }
+    if (g.clearKey === true) grok.key = '';
+    if (typeof g.key === 'string' && g.key.trim()) grok.key = g.key.trim().slice(0, 128);
+  }
+  return '';
 }
 
 // ── Partition Manager (PMan) mock ───────────────────────────────────────────────
@@ -696,6 +746,7 @@ const server = http.createServer(async (req, res) => {
       BATTERY: 76,
       CHARGING: false,
       WIFI: { ap: false, ip: '192.168.1.42', ssid: 'MyNetwork', rssi: -58 },
+      KEYS: true,
     });
     return sendJson(body);
   }
@@ -705,11 +756,29 @@ const server = http.createServer(async (req, res) => {
     if (method === 'POST') {
       let incoming;
       try { incoming = JSON.parse((await readBody(req)).toString()); } catch { return err(400, 'Invalid settings'); }
-      for (const k of Object.keys(settings)) if (k in incoming) settings[k] = incoming[k];
-      if (settings.dimmerSet > 120) settings.dimmerSet = 10;
-      console.log(`[SETTINGS] ${JSON.stringify(incoming)}`);
+      if (!incoming || typeof incoming !== 'object') return err(400, 'Invalid settings');
+      const problem = applySettings(incoming);
+      console.log(`[SETTINGS] ${JSON.stringify({ ...incoming, grok: incoming.grok && { ...incoming.grok, key: incoming.grok.key ? '(hidden)' : undefined } })}`);
+      if (problem) return err(400, problem);
     }
     return sendJson(JSON.stringify(settingsView()));
+  }
+
+  // POST /action: the Settings page's device actions (actionHandler)
+  if (pathname === '/action' && method === 'POST') {
+    const what = parseParams(await readBody(req), req.headers['content-type'] || '').do;
+    console.log(`[ACTION] ${what}`);
+    if (what === 'formatsd') return ok('The SD card is readable, so nothing was formatted');
+    if (what === 'reset') {
+      Object.assign(settings, { bright: 100, dimmerSet: 0, onlyBins: true, noDotFiles: true, autoBackup: true, askSpiffs: true, autoConnect: false, bootToApp: false, bootTimer: 4, DDLB: false, dev: false });
+      wifiNetworks.length = 0; hostname = ''; grok.key = ''; USERNAME = 'admin'; PASSWORD = 'launcher';
+      return ok('Settings reset and WiFi networks forgotten');
+    }
+    if (what === 'screensaver') return ok('Playing on the device until a key is pressed on it');
+    if (what === 'charge') return ok('Charging screen on. Press Sel on the device to leave it');
+    if (what === 'bootanim' && settings.dev) return ok('Playing the boot animation on the device');
+    if (what === 'off') return ok('Turning off');
+    return err(400, 'Unknown action');
   }
 
   // GET /reboot

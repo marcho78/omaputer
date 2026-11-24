@@ -227,6 +227,14 @@ kbd { padding: 0 5px; font: inherit; font-size: 11px; color: var(--dim); border:
 .tg b { display: block; font-weight: 400; color: var(--hi); }
 .tg small { color: var(--dim); }
 .form { display: grid; gap: 8px; }
+.form + .form { margin-top: 16px; }
+.form .lbl { margin: 4px 0 -4px; }
+.host { display: flex; align-items: center; gap: 8px; }
+.host input { flex: 1; min-width: 0; }
+.host .dim { margin-left: -4px; }
+#s-host-note { margin: 6px 0 0; }
+.dz { margin-top: 12px; padding-top: 12px; border-top: 1px dashed #1d544266; }
+#keys .k { flex: none; min-width: 1.8em; text-align: center; color: var(--ac); border: 1px solid var(--mute); }
 .chk { display: flex; align-items: center; gap: 8px; color: var(--fg2); cursor: pointer; }
 .nets { margin-bottom: 14px; }
 .nets .i { color: var(--fg2); }

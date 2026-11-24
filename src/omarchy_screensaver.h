@@ -11,6 +11,10 @@ bool omarchyScreensaver();
 
 // Plays the animation now, the same way: the main menu's Screensaver item.
 void omarchyScreensaverNow();
+
+// Whether there is enough free memory to play it now. With WiFi on there may not be; the
+// WebUI asks before starting it, so its page can say so.
+bool omarchyScreensaverCanPlay();
 #else
 inline bool omarchyScreensaver() { return false; }
 #endif

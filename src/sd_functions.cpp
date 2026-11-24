@@ -88,8 +88,24 @@ bool setupSdCard() {
 **                formats when mounting finds no filesystem, so a readable card is never
 **                wiped; it is reported as readable instead.
 ***************************************************************************************/
-bool formatSdCard() {
 #if defined(DISABLE_SDCARD_ICON) || !defined(SDM_SD) || defined(HEADLESS)
+#define SD_FORMAT_UNAVAILABLE
+#else
+// Remounts the card with format_if_empty set, so only a card with no readable filesystem is
+// formatted. Returns true when a card is mounted afterwards.
+static bool remountFormattingIfEmpty() {
+    SDM.end();
+    const bool sdOnTftBus = (_mosi == displayConfig.mosi && displayConfig.mosi >= 0);
+    // Same bus and defaults as setupSdCard(), with format_if_empty set.
+    sdcardMounted = sdOnTftBus ? SDM.begin(_cs, SPI, 4000000, "/sd", 5, true)
+                               : SDM.begin(_cs, sdcardSPI, 4000000, "/sd", 5, true);
+    launcherConsolePrintln(sdcardMounted ? "SD card formatted" : "SD card format failed");
+    return sdcardMounted;
+}
+#endif
+
+bool formatSdCard() {
+#if defined(SD_FORMAT_UNAVAILABLE)
     displayError("Not available on this device");
     return false;
 #else
@@ -99,14 +115,18 @@ bool formatSdCard() {
     }
     if (!confirmAction("Format SD card? All data is erased.")) return false;
     displayRedStripe("Formatting SD card...");
-    SDM.end();
-    const bool sdOnTftBus = (_mosi == displayConfig.mosi && displayConfig.mosi >= 0);
-    // Same bus and defaults as setupSdCard(), with format_if_empty set.
-    sdcardMounted = sdOnTftBus ? SDM.begin(_cs, SPI, 4000000, "/sd", 5, true)
-                               : SDM.begin(_cs, sdcardSPI, 4000000, "/sd", 5, true);
-    launcherConsolePrintln(sdcardMounted ? "SD card formatted" : "SD card format failed");
-    displayMsg(sdcardMounted ? "SD card formatted" : "Format failed: check the card");
-    return sdcardMounted;
+    const bool formatted = remountFormattingIfEmpty();
+    displayMsg(formatted ? "SD card formatted" : "Format failed: check the card");
+    return formatted;
+#endif
+}
+
+String formatSdCardIfUnreadable() {
+#if defined(SD_FORMAT_UNAVAILABLE)
+    return "Not available on this device";
+#else
+    if (setupSdCard()) return "The SD card is readable, so nothing was formatted";
+    return remountFormattingIfEmpty() ? "SD card formatted" : "Format failed: check the card";
 #endif
 }
 
@@ -334,7 +354,7 @@ void readFs(String &folder, std::vector<Option> &opt) {
 #ifndef RESERVED_NAV_KEYS
 #define RESERVED_NAV_KEYS ""
 #endif
-static bool isReservedBindKey(char c) {
+bool isReservedBindKey(char c) {
     for (const char *p = RESERVED_NAV_KEYS; *p; ++p) {
         if (*p == c) return true;
     }

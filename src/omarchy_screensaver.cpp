@@ -174,4 +174,6 @@ void omarchyScreensaverNow() {
     if (!play()) displayError("Not enough memory");
 }
 
+bool omarchyScreensaverCanPlay() { return enoughMemory(); }
+
 #endif

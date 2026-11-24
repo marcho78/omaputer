@@ -14,6 +14,10 @@
 #include "mykeyboard.h"
 #include "nvs.h"
 #include "nvs_helpers.h"
+#if defined(OMARCHY_GROK)
+#include "omarchy_grok.h"
+#endif
+#include "omarchy_screensaver.h"
 #include "onlineLauncher.h"
 #include "partition_install_layout.h"
 #include "partition_table_model.h"
@@ -84,11 +88,46 @@ const int default_webserverporthttp = 80;
 
 Config config;
 httpd_handle_t server = nullptr;
-// The WebUI's mDNS name (<name>.local). A Cardputer uses its model's tag, cardputer or
-// cardputer-adv, so an original and an ADV on one network don't both claim launcher.local.
-// Static, like the literal it replaced, in case mDNS keeps the pointer.
+// The WebUI's mDNS name (<name>.local): one set on the Settings page, else a Cardputer's model
+// tag (cardputer, cardputer-adv), so an original and an ADV on one network don't both claim
+// launcher.local. Static, like the literal it replaced, in case mDNS keeps the pointer.
 String webUiHost = "launcher";
+constexpr const char *kWebUiHostKey = "webui_host"; // In the "launcher" NVS namespace.
 bool webUiApMode = false; // The WebUI runs on the Launcher's own access point, not a network it joined.
+
+String autoWebUiHost() { return ota_tag.startsWith("cardputer") ? ota_tag : String("launcher"); }
+
+String chosenWebUiHost() {
+    String saved = lnvs::getString("launcher", kWebUiHostKey, 32);
+    return saved.isEmpty() ? autoWebUiHost() : saved;
+}
+
+// What a .local name may be: letters, digits and hyphens, not starting or ending with one.
+bool validHostName(const String &name) {
+    if (name.isEmpty() || name.length() > 32 || name[0] == '-' || name[name.length() - 1] == '-') return false;
+    for (char c : name) {
+        if (!isalnum(static_cast<unsigned char>(c)) && c != '-') return false;
+    }
+    return true;
+}
+
+// Work a WebUI request hands to the main loop (startWebUiLoopCommon), which owns the screen
+// and has the stack for formatting a card. A request that needs the answer waits for it.
+enum class DeviceTask : uint8_t { None, Redraw, Rotate, FormatSd, Screensaver, Charge, BootAnimation, PowerOff };
+volatile DeviceTask deviceTask = DeviceTask::None;
+int deviceTaskArg = 0;
+String deviceTaskResult;
+SemaphoreHandle_t deviceTaskDone = nullptr;
+
+String runOnDevice(DeviceTask task, int arg = 0, bool wait = false) {
+    if (!deviceTaskDone) deviceTaskDone = xSemaphoreCreateBinary();
+    xSemaphoreTake(deviceTaskDone, 0); // Drops a "done" from earlier work nobody waited for.
+    deviceTaskArg = arg;
+    deviceTask = task;
+    if (!wait) return "";
+    if (xSemaphoreTake(deviceTaskDone, pdMS_TO_TICKS(60000)) != pdTRUE) return "The device didn't finish in time";
+    return deviceTaskResult;
+}
 bool shouldReboot = false;
 String uploadFolder = "";
 
@@ -1298,6 +1337,9 @@ esp_err_t systemInfoHandler(httpd_req_t *req) {
 #if defined(HEADLESS)
     doc["HEADLESS"] = true; // SD card pins can only be set on boards without a screen.
 #endif
+#if defined(HAS_KEYBOARD)
+    doc["KEYS"] = true; // .bin files can be bound to a key.
+#endif
 
     String json;
     serializeJson(doc, json);
@@ -1464,6 +1506,11 @@ esp_err_t editfileHandler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// Secrets the NVS editor never shows or overwrites: the WebUI session token and the xAI key.
+bool hiddenNvsKey(const char *ns, const char *key) {
+    return strcmp(ns, "launcher") == 0 && (strcmp(key, "token") == 0 || strcmp(key, "xai_key") == 0);
+}
+
 esp_err_t nvsHandler(httpd_req_t *req) {
     if (!checkUserWebAuth(req)) return ESP_OK;
 
@@ -1480,7 +1527,7 @@ esp_err_t nvsHandler(httpd_req_t *req) {
             nvs_entry_info_t info;
             nvs_entry_info(it, &info);
 
-            bool skip = strcmp(info.namespace_name, "launcher") == 0 && strcmp(info.key, "token") == 0;
+            bool skip = hiddenNvsKey(info.namespace_name, info.key);
             if (!skip) {
                 if (strcmp(curNs, info.namespace_name) != 0) {
                     handle.open(info.namespace_name, false);
@@ -1545,7 +1592,7 @@ esp_err_t nvsHandler(httpd_req_t *req) {
             for (JsonObject field : ns.value().as<JsonArray>()) {
                 const char *key = field["k"];
                 if (!key) continue;
-                if (strcmp(nsName, "launcher") == 0 && strcmp(key, "token") == 0) continue;
+                if (hiddenNvsKey(nsName, key)) continue;
 
                 // Blobs and unknown types have no editor in the UI and are not sent
                 // back, so anything that is not a scalar or a string is ignored here.
@@ -2130,7 +2177,7 @@ esp_err_t settingsHandler(httpd_req_t *req) {
     if (req->method == HTTP_POST) {
         String body;
         JsonDocument incoming;
-        if (!receiveBody(req, body, 1024) || deserializeJson(incoming, body) || !incoming.is<JsonObject>()) {
+        if (!receiveBody(req, body, 2048) || deserializeJson(incoming, body) || !incoming.is<JsonObject>()) {
             sendText(req, 400, "text/plain", "Invalid settings");
             return ESP_OK;
         }
@@ -2138,16 +2185,71 @@ esp_err_t settingsHandler(httpd_req_t *req) {
         static const char *const kEditable[] = {
             "bright",    "dimmerSet", "onlyBins", "noDotFiles", "autoBackup", "askSpiffs", "autoConnect",
             "bootToApp", "bootTimer", "DDLB",     "FGCOLOR",    "BGCOLOR",    "ALCOLOR",   "odd",
-            "even"
+            "even",      "dev"
         };
         JsonDocument changes;
         for (const char *key : kEditable) {
             if (!incoming[key].isNull()) changes[key] = incoming[key];
         }
-        body = "";
-        serializeJson(changes, body);
-        if (!loadSettingsJson(body)) {
-            sendText(req, 500, "text/plain", "Could not save the settings");
+        if (changes.size()) {
+            body = "";
+            serializeJson(changes, body);
+            if (!loadSettingsJson(body)) {
+                sendText(req, 500, "text/plain", "Could not save the settings");
+                return ESP_OK;
+            }
+        }
+
+        String error;
+        if (incoming["rotation"].is<int>()) {
+            const int value = incoming["rotation"];
+            bool offered = false;
+            for (const RotationChoice &choice : rotationChoices()) offered |= choice.value == value;
+            if (!offered) error = "That orientation isn't offered on this screen";
+            else runOnDevice(DeviceTask::Rotate, value, true);
+        }
+        if (incoming["hostname"].is<const char *>()) {
+            String name = incoming["hostname"].as<const char *>();
+            name.trim();
+            name.toLowerCase();
+            if (!name.isEmpty() && !validHostName(name)) {
+                error = "A name can only have letters, digits and hyphens, not at either end";
+            } else {
+                if (name.isEmpty()) {
+                    lnvs::Handle handle("launcher", true);
+                    if (handle && lnvs::eraseKey(handle.raw(), kWebUiHostKey)) handle.commit();
+                } else {
+                    lnvs::setString("launcher", kWebUiHostKey, name.c_str());
+                }
+                webUiHost = chosenWebUiHost();
+                launcherMdnsStart(webUiHost.c_str(), config.webserverporthttp); // Answers to it right away.
+                runOnDevice(DeviceTask::Redraw);                                   // Its screen shows the address.
+            }
+        }
+#if defined(HAS_KEYBOARD)
+        // Keyboard shortcuts, like the SD browser's "Bind to key" and Settings > Manage shortcuts.
+        if (incoming["bind"].is<JsonObject>()) {
+            String key = incoming["bind"]["key"] | "";
+            const String path = incoming["bind"]["path"] | "";
+            String upperPath = path;
+            upperPath.toUpperCase();
+            key.toLowerCase();
+            if (key.length() != 1 || key[0] <= ' ' || key[0] > '~') error = "Pick one key";
+            else if (isReservedBindKey(key[0])) error = "That key moves around the menus";
+            else if (!upperPath.endsWith(".BIN") || !SDM.exists(path)) error = "Pick a .bin file on the SD card";
+            else setKeyBinding(key, path);
+        }
+        if (incoming["unbind"].is<const char *>()) removeKeyBinding(incoming["unbind"].as<const char *>());
+        if (incoming["unbindAll"].as<bool>()) clearKeyBindings();
+#endif
+#if defined(OMARCHY_GROK)
+        if (incoming["grok"].is<JsonObject>()) {
+            const String grokError = omarchyGrokApplySettings(incoming["grok"].as<JsonObjectConst>());
+            if (grokError.length()) error = grokError;
+        }
+#endif
+        if (error.length()) {
+            sendText(req, 400, "text/plain", error);
             return ESP_OK;
         }
     }
@@ -2163,11 +2265,22 @@ esp_err_t settingsHandler(httpd_req_t *req) {
     doc["bootToApp"] = bootToApp;
     doc["bootTimer"] = bootTimer;
     doc["DDLB"] = DDLB;
+    doc["dev"] = dev_mode;
     doc["FGCOLOR"] = FGCOLOR;
     doc["BGCOLOR"] = BGCOLOR;
     doc["ALCOLOR"] = ALCOLOR;
     doc["odd"] = odd_color;
     doc["even"] = even_color;
+    doc["rotation"] = rotation;
+    JsonArray rotations = doc["rotations"].to<JsonArray>();
+    for (const RotationChoice &choice : rotationChoices()) {
+        JsonObject entry = rotations.add<JsonObject>();
+        entry["value"] = choice.value;
+        entry["kind"] = choice.kind;
+    }
+    doc["hostname"] = lnvs::getString("launcher", kWebUiHostKey, 32); // Empty: the automatic name.
+    doc["hostAuto"] = autoWebUiHost();
+    doc["hostNow"] = webUiHost;
     doc["wui_usr"] = wui_usr;
     doc["defaultLogin"] = wui_usr == "admin" && wui_pwd == "launcher";
     JsonArray wifi = doc["wifi"].to<JsonArray>();
@@ -2176,6 +2289,21 @@ esp_err_t settingsHandler(httpd_req_t *req) {
         entry["ssid"] = network.ssid;
         entry["pwd"] = network.hasPassword;
     }
+#if defined(HAS_KEYBOARD)
+    JsonObject shortcuts = doc["shortcuts"].to<JsonObject>();
+    for (JsonPair binding : ensureSettingsRoot()["key_binding"].as<JsonObject>()) {
+        shortcuts[binding.key()] = binding.value();
+    }
+#endif
+#if defined(OMARCHY_GROK)
+    omarchyGrokSettingsJson(doc["grok"].to<JsonObject>());
+#endif
+#if defined(OMARCHY_SCREENSAVER)
+    doc["saver"] = true; // The device actions this build has.
+#endif
+#if !defined(E_PAPER_DISPLAY)
+    doc["charge"] = true;
+#endif
     String json;
     serializeJson(doc, json);
     sendText(req, "application/json", json);
@@ -2227,6 +2355,42 @@ esp_err_t wifiHandler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// The Settings page's device actions, the WebUI side of the same Settings menu items. Work
+// that draws on the screen runs on the main loop (runOnDevice).
+esp_err_t actionHandler(httpd_req_t *req) {
+    if (!checkUserWebAuth(req)) return ESP_OK;
+    const String what = readParams(req).get("do");
+    if (what == "formatsd") {
+        sendText(req, "text/plain", runOnDevice(DeviceTask::FormatSd, 0, true));
+    } else if (what == "reset") {
+        factoryResetNow();
+        sendText(req, "text/plain", "Settings reset and WiFi networks forgotten");
+#if defined(OMARCHY_SCREENSAVER)
+    } else if (what == "screensaver") {
+        if (!omarchyScreensaverCanPlay()) {
+            sendText(req, 400, "text/plain", "Not enough free memory for the screensaver while WiFi is on");
+        } else {
+            runOnDevice(DeviceTask::Screensaver);
+            sendText(req, "text/plain", "Playing on the device until a key is pressed on it");
+        }
+#endif
+#if !defined(E_PAPER_DISPLAY)
+    } else if (what == "charge") {
+        runOnDevice(DeviceTask::Charge);
+        sendText(req, "text/plain", "Charging screen on. Press Sel on the device to leave it");
+#endif
+    } else if (what == "bootanim" && dev_mode) {
+        runOnDevice(DeviceTask::BootAnimation);
+        sendText(req, "text/plain", "Playing the boot animation on the device");
+    } else if (what == "off") {
+        sendText(req, "text/plain", "Turning off");
+        runOnDevice(DeviceTask::PowerOff);
+    } else {
+        sendText(req, 400, "text/plain", "Unknown action");
+    }
+    return ESP_OK;
+}
+
 esp_err_t fallbackHandler(httpd_req_t *req) {
     redirectTo(req, "/");
     return ESP_OK;
@@ -2249,7 +2413,7 @@ void registerHandler(const char *uri, httpd_method_t method, esp_err_t (*handler
 void configureWebServer() {
     ensurePersistedSessionLoaded();
 
-    webUiHost = ota_tag.startsWith("cardputer") ? ota_tag : String("launcher");
+    webUiHost = chosenWebUiHost();
     launcherMdnsStart(webUiHost.c_str(), config.webserverporthttp);
 
     registerHandler("/ping", HTTP_GET, pingHandler);
@@ -2282,6 +2446,7 @@ void configureWebServer() {
     registerHandler("/settings", HTTP_GET, settingsHandler);
     registerHandler("/settings", HTTP_POST, settingsHandler);
     registerHandler("/wifi", HTTP_POST, wifiHandler);
+    registerHandler("/action", HTTP_POST, actionHandler);
     registerHandler("/*", HTTP_GET, fallbackHandler);
     registerHandler("/*", HTTP_POST, fallbackHandler);
 }
@@ -2298,12 +2463,14 @@ String readLineFromFile(File myFile) {
     return line;
 }
 
-void startWebUiLoopCommon(bool mode_ap) {
+// What the device shows while the WebUI runs: its address and the login.
+void drawWebUiScreen() {
     String txt;
-    if (!mode_ap) txt = launcherWifiLocalIp().c_str();
+    if (!webUiApMode) txt = launcherWifiLocalIp().c_str();
     else txt = launcherWifiApIp().c_str();
 
 #if !defined(HEADLESS) || defined(HEADLESS_WITH_TFT)
+    tft->fillScreen(BGCOLOR);
     tft->drawRoundRect(5, 5, tftWidth - 10, tftHeight - 10, 5, ALCOLOR);
     tft->fillRoundRect(6, 6, tftWidth - 12, tftHeight - 12, 5, BGCOLOR);
     setTftDisplay(7, 7, ALCOLOR, _fp, BGCOLOR);
@@ -2326,6 +2493,40 @@ void startWebUiLoopCommon(bool mode_ap) {
     launcherConsolePrintf("IP %s\n", txt.c_str());
     launcherConsolePrintf("Usr: %s\n", wui_usr.c_str());
     launcherConsolePrintf("Pwd: %s\n", wui_pwd.c_str());
+}
+
+// Runs the work a WebUI request handed over (runOnDevice), then redraws the WebUI screen,
+// which the work drew over.
+void runDeviceTask() {
+    String result;
+    switch (deviceTask) {
+        case DeviceTask::Rotate:
+            applyRotation(deviceTaskArg);
+            saveConfigs();
+            break;
+        case DeviceTask::FormatSd: result = formatSdCardIfUnreadable(); break;
+#if defined(OMARCHY_SCREENSAVER)
+        case DeviceTask::Screensaver: omarchyScreensaverNow(); break;
+#endif
+#if !defined(E_PAPER_DISPLAY)
+        case DeviceTask::Charge: chargeMode(); break;
+#endif
+        case DeviceTask::BootAnimation: initDisplayLoop(); break;
+        case DeviceTask::PowerOff:
+            vTaskDelay(pdMS_TO_TICKS(300)); // Lets the answer reach the browser first.
+            powerOff();
+            break;
+        default: break;
+    }
+    deviceTaskResult = result;
+    deviceTask = DeviceTask::None;
+    xSemaphoreGive(deviceTaskDone);
+    drawWebUiScreen();
+}
+
+void startWebUiLoopCommon(bool mode_ap) {
+    webUiApMode = mode_ap;
+    drawWebUiScreen();
 
 #if !defined(HEADLESS)
     while (!check(SelPress)) {
@@ -2333,6 +2534,7 @@ void startWebUiLoopCommon(bool mode_ap) {
     while (1) {
 #endif
         if (shouldReboot) { return (void)releaseHeapObjectsAndReboot(); }
+        if (deviceTask != DeviceTask::None) runDeviceTask();
         if (updateFromSd_var) {
             updateFromSD(fileToCopy);
             updateFromSd_var = false;
