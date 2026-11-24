@@ -369,6 +369,13 @@ void setup() {
     int j = 0;
     LongPress = true;
     RAM_LOG("before-bootscreen");
+#if !defined(HEADLESS)
+    // A restart asked for from the WebUI goes straight back to it (the end of setup), past the
+    // boot screen and so past the installed app it would otherwise start.
+    bool webUiApModeBack = false;
+    const bool webUiBack = webUiComeBackPending(webUiApModeBack);
+    if (webUiBack) goto Launcher;
+#endif
     while (launcherMillis() < i + (1000 + bootToApp * bootTimer * 1000)) { // increased from 2500 to 5000
         initDisplay();                                                     // Inicia o display
 
@@ -463,6 +470,9 @@ Launcher:
     launcherConsoleFlush();
 #if LED > 0 && defined(HEADLESS)
     launcherGpioWrite(LED, LED_ON ? LOW : HIGH); // turn off the LED
+#endif
+#if !defined(HEADLESS)
+    if (webUiBack) startWebUi(webUiApModeBack ? "Launcher" : "", 0, webUiApModeBack);
 #endif
 }
 
