@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+**Asked to install or set up this launcher on a Cardputer?** Follow
+[`AGENT_SETUP.md`](AGENT_SETUP.md): it covers flashing, WiFi and the xAI key
+safely. What follows is for changing the code.
+
 Guidance for agents working in this repository — a multi-board ESP32
 Arduino/PlatformIO firmware ("Launcher") that boots and manages other
 firmware across dozens of hardware devices (LilyGO, M5Stack, CYD, Elecrow,

@@ -9,3 +9,10 @@ __pycache__
 docs
 managed_components
 sdkconfig.*
+
+# Secrets never go into the repository: an xAI key file or an environment file. Device
+# backups and settings dumps are .bin files, already left out above.
+*xai*key*
+.env
+.env.*
+*.key
