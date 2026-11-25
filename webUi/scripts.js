@@ -224,28 +224,14 @@ async function bootApp(label, name) {
 }
 
 async function reboot(now) {
-  if (!now && !await ask({ title: `Restart the ${dev}?`, text: 'It comes back to Web UI by itself, and this page with it.', ok: 'restart', danger: true })) return;
-  try { await api('/reboot'); offline(`The ${dev} is restarting.`, true); } catch (e) { fail(e); }
+  if (!now && !await ask({ title: `Restart the ${dev}?`, text: 'This page goes offline until Web UI is started on it again.', ok: 'restart', danger: true })) return;
+  try { await api('/reboot'); offline(`The ${dev} is restarting.`); } catch (e) { fail(e); }
 }
 
-// The page while the device is away. After a restart from here it comes back to Web UI by
-// itself (webUiComeBackPending), so the page waits for it and reloads.
-function offline(msg, comesBack) {
+function offline(msg) {
   busy++;
   $('#gone-m').textContent = msg;
-  $('#gone-n').textContent = comesBack ? 'This page comes back by itself once it has restarted.' : 'This page comes back once Web UI is started on the device again.';
   $('#gone').hidden = false;
-  if (comesBack) waitForDevice();
-}
-async function waitForDevice() {
-  await sleep(8000); // until it has gone down
-  for (let i = 0; i < 40; i++) {
-    try {
-      if ((await fetch('/ping', { cache: 'no-store', signal: AbortSignal.timeout(3000) })).ok) return location.reload();
-    } catch {}
-    await sleep(3000);
-  }
-  $('#gone-n').textContent = "It hasn't come back after two minutes. Start Web UI on the device, then reload.";
 }
 
 // ── Install a .bin from this computer ────────────────────────────────────────────────────
@@ -351,7 +337,7 @@ async function installBin() {
       $('#ota-bar').style.width = f * 100 + '%';
       $('#ota-pct').textContent = Math.round(f * 100) + '%';
     });
-    out.innerHTML = `<p class="ok">${esc(file.name)} is installed. Restart the ${esc(dev)} to finish. It comes back here, and you can start the app from installed.</p><div class="row end"><button class="pri" data-act="restart">${ico('power')}restart now</button></div>`;
+    out.innerHTML = `<p class="ok">${esc(file.name)} is installed. Restart the ${esc(dev)} to finish.</p><div class="row end"><button class="pri" data-act="restart">${ico('power')}restart now</button></div>`;
   } catch (e) {
     out.innerHTML = `<p class="warn">The install failed: ${esc(e.message)}</p>`;
   } finally {
@@ -600,9 +586,9 @@ async function partAction(act, btn, e) {
       return pmChange({ action: 'create', type: btn.dataset.t, subtype: btn.dataset.s, label: v.label, size });
     }
     if (act === 'apply') {
-      if (!await ask({ title: 'Write the partition table?', text: `The ${dev} writes it and restarts, then comes back to Web UI by itself.`, ok: 'apply', danger: true })) return;
+      if (!await ask({ title: 'Write the partition table?', text: `The ${dev} writes it and restarts, and this page goes offline.`, ok: 'apply', danger: true })) return;
       await post('/partitions', { action: 'apply' });
-      return offline('Writing the partition table and restarting.', true);
+      return offline('Writing the partition table and restarting.');
     }
     if (act === 'discard') {
       if (await ask({ title: 'Discard the changes?', ok: 'discard' })) await pmChange({ action: 'discard' });

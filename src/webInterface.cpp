@@ -31,11 +31,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
-#include <esp_attr.h>
 #include <esp_heap_caps.h>
 #include <esp_partition.h>
-#include <esp_rtc_time.h>
-#include <esp_system.h>
 #include <globals.h>
 #include <memory>
 #include <vector>
@@ -100,31 +97,6 @@ httpd_handle_t server = nullptr;
 String webUiHost = "launcher";
 constexpr const char *kWebUiHostKey = "webui_host"; // In the "launcher" NVS namespace.
 bool webUiApMode = false; // The WebUI runs on the Launcher's own access point, not a network it joined.
-
-// A restart asked for from the WebUI comes back to it (webUiComeBackPending, checked at boot).
-// Kept in RTC memory, which survives a restart but not power-off, and honoured only within a
-// minute of being set, so it can't start the WebUI by surprise much later.
-struct WebUiComeBack {
-    uint32_t magic;
-    uint32_t apMode;
-    uint64_t setAtUs; // esp_rtc_get_time_us(), which keeps counting across restarts
-};
-RTC_NOINIT_ATTR WebUiComeBack webUiComeBack;
-constexpr uint32_t kComeBackMagic = 0x57454255; // "WEBU"
-
-void webUiComeBackAfterRestart() {
-    webUiComeBack.apMode = webUiApMode;
-    webUiComeBack.setAtUs = esp_rtc_get_time_us();
-    webUiComeBack.magic = kComeBackMagic;
-}
-
-bool webUiComeBackPending(bool &apMode) {
-    const bool pending = webUiComeBack.magic == kComeBackMagic && esp_reset_reason() == ESP_RST_SW &&
-                         esp_rtc_get_time_us() - webUiComeBack.setAtUs < 60000000ULL;
-    webUiComeBack.magic = 0; // Once.
-    apMode = webUiComeBack.apMode;
-    return pending;
-}
 
 String autoWebUiHost() { return ota_tag.startsWith("cardputer") ? ota_tag : String("launcher"); }
 
@@ -1383,7 +1355,6 @@ esp_err_t systemInfoHandler(httpd_req_t *req) {
 
 esp_err_t rebootHandler(httpd_req_t *req) {
     if (checkUserWebAuth(req)) {
-        webUiComeBackAfterRestart();
         shouldReboot = true;
         sendText(req, "text/html", "Rebooting");
     }
@@ -2167,7 +2138,6 @@ esp_err_t partitionsHandler(httpd_req_t *req) {
         serializeJson(doc, json);
         sendText(req, "application/json", json);
     } else if (action == "apply") {
-        webUiComeBackAfterRestart();
         sendText(req, "text/plain", "OK"); // device reboots from the main loop once the response flushes
     } else {
         sendText(req, "application/json", buildPartitionsJson(webPartCtx.table, webPartCtx.dirty));
