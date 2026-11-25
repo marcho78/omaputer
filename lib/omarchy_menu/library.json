@@ -1,0 +1,8 @@
+{
+  "name": "omarchy_menu",
+  "version": "1.0.0",
+  "description": "The Launcher's tile menu for the Cardputer: sliding coloured icon tiles and a status bar. Fonts are JetBrains Mono (OFL.txt).",
+  "headers": "omarchy_menu.h",
+  "frameworks": "*",
+  "platforms": "*"
+}

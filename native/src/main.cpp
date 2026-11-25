@@ -51,6 +51,7 @@ SPIFFSFS SPIFFS;
 #include "../../src/display.cpp"
 #include "../../src/main.cpp"
 #include "../../src/omarchy_screensaver.cpp"
+#include "../../src/omarchy_tile_menu.cpp"
 #include "../../src/omarchy_ui.cpp"
 
 // ---------------------------------------------------------------------------

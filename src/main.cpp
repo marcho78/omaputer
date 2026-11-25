@@ -14,6 +14,7 @@
 
 #include "omarchy_grok.h"
 #include "omarchy_screensaver.h"
+#include "omarchy_tile_menu.h"
 #include "powerSave.h"
 #include "ram_profile.h"
 #include "utils.h"
@@ -664,6 +665,9 @@ void loop() {
 
         // Select and run function
         if (check(SelPress)) {
+#if defined(OMARCHY_TILE_MENU)
+            omarchyTileMenuRelease(); // Its memory is needed more by the item about to run.
+#endif
             menuItems.at(index).action(); // Call the action associated with the selected menu item
             tft->drawPixel(0, 0, 0);
             tft->fillScreen(BGCOLOR);
@@ -683,6 +687,9 @@ void loop() {
                 String pressedKey = String(pressedChar);
                 String boundPath;
                 if (sdcardMounted && getKeyBinding(pressedKey, boundPath)) {
+#if defined(OMARCHY_TILE_MENU)
+                    omarchyTileMenuRelease();
+#endif
                     if (SDM.exists(boundPath)) {
                         updateFromSD(boundPath); // reboots on success; only returns on failure
                     } else {

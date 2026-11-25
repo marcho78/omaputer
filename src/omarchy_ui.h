@@ -54,6 +54,12 @@ void wifiIcon(int x, int y, uint16_t color);
 // The OMARCHY wordmark centred on cx, `scale` screen pixels per logo pixel.
 void wordmark(int cx, int y, int scale);
 
+#if defined(USE_NATIVE_SDL) || defined(USE_ARDUINO_GFX)
+// Sends w x h pixels of RGB565 with their two bytes swapped (the panel's order) to the
+// screen at x, y. For the full-screen drawings: the screensaver and the tile menu.
+void pushFrame(const uint16_t *pixels, int x, int y, int w, int h);
+#endif
+
 } // namespace omarchy
 
 #endif

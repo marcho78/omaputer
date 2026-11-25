@@ -11,6 +11,7 @@
 #include "idf/launcher_platform.h"
 #include "logo.h"
 #include "mykeyboard.h"
+#include "omarchy_ui.h"
 #include "raster.h"
 #include <algorithm>
 #include <esp_random.h>
@@ -67,16 +68,7 @@ bool enoughMemory() {
 // The frame holds RGB565 with its two bytes swapped, the order the panel takes, so it is
 // sent as it is.
 void present(const ofx::Framebuffer &frame) {
-    uint16_t *pixels = const_cast<uint16_t *>(frame.data());
-#if defined(USE_NATIVE_SDL)
-    tft->native()->pushImage(
-        0, 0, ofx::kScreenWidth, ofx::kScreenHeight, reinterpret_cast<const lgfx::swap565_t *>(pixels)
-    );
-#elif defined(USE_ARDUINO_GFX)
-    tft->native()->draw16bitBeRGBBitmap(0, 0, pixels, ofx::kScreenWidth, ofx::kScreenHeight);
-#else
-#error "omarchy_screensaver: no frame push for this display backend"
-#endif
+    omarchy::pushFrame(frame.data(), 0, 0, ofx::kScreenWidth, ofx::kScreenHeight);
 }
 
 // Plays until a key is pressed, then clears the screen. Returns false, having drawn nothing,

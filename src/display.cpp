@@ -5,6 +5,7 @@
 #include "idf/launcher_platform.h"
 #include "mykeyboard.h"
 #include "omarchy_screensaver.h"
+#include "omarchy_tile_menu.h"
 #include "omarchy_ui.h"
 #include "onlineLauncher.h"
 #include "powerSave.h"
@@ -934,6 +935,11 @@ static void drawMainMenuRow(MenuOptions &o, int x, int y, int w, int h, bool sel
 }
 
 void drawMainMenu(std::vector<MenuOptions> &opt, int index, bool forceFullRedraw) {
+#if defined(OMARCHY_TILE_MENU)
+    // The Cardputer's sliding colour tiles; the list below only if they can't be drawn.
+    if (omarchyTileMenuDraw(opt, index, forceFullRedraw)) return;
+    forceFullRedraw = true;
+#endif
     // Omarchy restyle: a one-column list in a window under the top bar, like the Omarchy
     // menu, with the selected item's description in the bar. The last selection and
     // scroll position are kept so a move only repaints the two rows that changed.
@@ -1010,6 +1016,9 @@ void drawMainMenu(std::vector<MenuOptions> &opt, int index, bool forceFullRedraw
 **                 changed (or always, after a full redraw). Returns true if anything was drawn.
 ***************************************************************************************/
 bool drawStatusIcons(bool reset) {
+#if defined(OMARCHY_TILE_MENU)
+    if (omarchyTileMenuShown()) return omarchyTileMenuStatus();
+#endif
     static int bat = 0;
     static bool chg = false;
     static bool wifi = false;

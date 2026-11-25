@@ -27,6 +27,8 @@ const uint8_t kIconPower[8] = {0x18, 0x5A, 0x99, 0x99, 0x81, 0x81, 0x42, 0x3C};
 const uint8_t kIconApp[8] = {0xFF, 0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0xFF};
 // Omarchy's square on a monitor.
 const uint8_t kIconScreensaver[8] = {0xFF, 0x81, 0xBD, 0xA5, 0xBD, 0x81, 0xFF, 0x3C};
+// Grok's face: a ball with two eyes at the top right.
+const uint8_t kIconGrok[8] = {0x3C, 0x7E, 0xF5, 0xF5, 0xFF, 0xFF, 0x7E, 0x3C};
 const uint8_t kIconWifi[8] = {0x00, 0x7E, 0x81, 0x3C, 0x42, 0x18, 0x18, 0x00};
 
 void bitmap8(const uint8_t *rows, int x, int y, uint16_t color, int scale) {
@@ -97,6 +99,7 @@ void menuIcon(const String &name, int x, int y, uint16_t color, int scale) {
     else if (name == "CFG") icon = kIconSettings;
     else if (name == "OFF") icon = kIconPower;
     else if (name == "SCREENSAVER") icon = kIconScreensaver;
+    else if (name == "GROKVOICE") icon = kIconGrok;
     bitmap8(icon, x, y, color, scale);
 }
 
@@ -109,6 +112,7 @@ String menuLabel(const String &name) {
     if (name == "CFG") return "Settings";
     if (name == "OFF") return "Power Off";
     if (name == "SCREENSAVER") return "Screensaver";
+    if (name == "GROKVOICE") return "Grok";
     return "";
 }
 
@@ -125,5 +129,15 @@ void wordmark(int cx, int y, int scale) {
         }
     }
 }
+
+#if defined(USE_NATIVE_SDL) || defined(USE_ARDUINO_GFX)
+void pushFrame(const uint16_t *pixels, int x, int y, int w, int h) {
+#if defined(USE_NATIVE_SDL)
+    tft->native()->pushImage(x, y, w, h, reinterpret_cast<const lgfx::swap565_t *>(pixels));
+#else
+    tft->native()->draw16bitBeRGBBitmap(x, y, const_cast<uint16_t *>(pixels), w, h);
+#endif
+}
+#endif
 
 } // namespace omarchy
