@@ -71,6 +71,9 @@ int launcherWifiScan(std::vector<LauncherWifiAp> &out);
 bool launcherWifiStartAp(const char *ssid, const char *password, uint8_t channel, uint8_t max_clients);
 bool launcherWifiStop();
 bool launcherWifiIsConnected();
+// On, the radio sleeps between the router's beacons (ESP-IDF's default modem sleep) to save
+// battery while nothing needs speed; off, full speed, as every start of WiFi sets it.
+void launcherWifiPowerSave(bool on);
 std::string launcherWifiLocalIp();
 std::string launcherWifiApIp();
 // The network the station is on and its signal in dBm; false when it is on none.

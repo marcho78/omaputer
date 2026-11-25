@@ -16,6 +16,15 @@ void installFirmwareFromManifest(const String &fid, const String &version, Strin
 bool connectWifi();
 bool ensureWifiConnected(const String &ssid = "", int encryptation = 0, bool isAP = false);
 
+#if defined(OMARCHY_WIFI_AT_LAUNCH)
+// Joins the first saved network in range in the background, drawing nothing, and stays on it.
+// Does nothing when Auto connect is off or no network is saved. For the Launcher's start, and
+// after Web UI closes its own access point.
+void launcherWifiAtLaunch();
+// Waits for that join to finish, so nothing else scans or connects meanwhile.
+void launcherWifiAtLaunchWait();
+#endif
+
 void ota_function();
 
 void downloadFirmware(

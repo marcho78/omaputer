@@ -466,6 +466,9 @@ Launcher:
 #if LED > 0 && defined(HEADLESS)
     launcherGpioWrite(LED, LED_ON ? LOW : HIGH); // turn off the LED
 #endif
+#if defined(OMARCHY_WIFI_AT_LAUNCH)
+    launcherWifiAtLaunch(); // In the background, while the menu comes up.
+#endif
 }
 
 /**********************************************************************
@@ -608,6 +611,9 @@ void loop() {
                     resetGlobals();
                     if (i == index) {
                         item.action();
+#if defined(OMARCHY_WIFI_AT_LAUNCH)
+                        launcherWifiPowerSave(true); // Back at the menu: nothing needs full speed.
+#endif
                         tft->drawPixel(0, 0, 0);
                         tft->fillScreen(BGCOLOR);
                         first_loop = true;
@@ -659,6 +665,9 @@ void loop() {
             omarchyTileMenuRelease(); // Its memory is needed more by the item about to run.
 #endif
             menuItems.at(index).action(); // Call the action associated with the selected menu item
+#if defined(OMARCHY_WIFI_AT_LAUNCH)
+            launcherWifiPowerSave(true); // Back at the menu: nothing needs full speed.
+#endif
             tft->drawPixel(0, 0, 0);
             tft->fillScreen(BGCOLOR);
             pass_by = 0;

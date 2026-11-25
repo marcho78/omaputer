@@ -545,6 +545,13 @@ bool launcherWifiIsConnected() {
     return staHasIpAddress();
 }
 
+void launcherWifiPowerSave(bool on) {
+#if defined(ENABLE_ESP_AT_INTERFACE)
+    if (activeBackend == LauncherWifiBackend::EspAt) return;
+#endif
+    if (wifiInitialized) esp_wifi_set_ps(on ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
+}
+
 std::string launcherWifiLocalIp() {
 #if defined(ENABLE_ESP_AT_INTERFACE)
     if (activeBackend == LauncherWifiBackend::EspAt) return launcherWifiAtLocalIp();

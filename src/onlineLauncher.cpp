@@ -17,8 +17,11 @@
 #include "settings.h"
 #include "utils.h"
 #include <algorithm>
+#include <atomic>
 #include <esp_ota_ops.h>
 #include <globals.h>
+#include <memory>
+#include <new>
 
 #define M5_SERVER_PATH "https://m5burner-cdn.m5stack.com/firmware/"
 
@@ -164,9 +167,100 @@ bool connectWifi() {
     return launcherWifiIsConnected();
 }
 
+#if defined(OMARCHY_WIFI_AT_LAUNCH)
+namespace {
+struct SavedNetwork {
+    String ssid;
+    String password;
+};
+constexpr uint32_t kLaunchJoinMs = 10000; // For each try; a join takes 1 to 4 s.
+// Right after a restart the router may still hold the Cardputer's last connection and turn
+// the first try away, so each network is tried a few times.
+constexpr int kLaunchJoinTries = 3;
+constexpr uint32_t kLaunchRetryMs = 2000;
+std::atomic<bool> launchJoinBusy{false};
+
+// Joins the first saved network in range, in the order they were saved; false if none could be.
+bool joinSavedNetwork(const std::vector<SavedNetwork> &saved) {
+    std::vector<LauncherWifiAp> found;
+    if (launcherWifiScan(found) <= 0) return false;
+    for (const SavedNetwork &net : saved) {
+        const bool inRange = std::any_of(found.begin(), found.end(), [&](const LauncherWifiAp &ap) {
+            return net.ssid == ap.ssid.c_str();
+        });
+        if (!inRange) continue;
+        for (int attempt = 1; attempt <= kLaunchJoinTries; ++attempt) {
+            const LauncherWifiConnectState state =
+                launcherWifiConnectStatus(net.ssid.c_str(), net.password.c_str(), kLaunchJoinMs);
+            if (state == LauncherWifiConnectState::Connected) {
+                launcherConsolePrintf("WiFi at launch: joined %s, ip %s\n", net.ssid.c_str(), launcherWifiLocalIp().c_str());
+                return true;
+            }
+            const char *why = state == LauncherWifiConnectState::WrongPassword ? "refused"
+                              : state == LauncherWifiConnectState::Pending     ? "timed out"
+                                                                               : "failed";
+            launcherConsolePrintf("WiFi at launch: try %d of %d to join %s %s\n", attempt, kLaunchJoinTries, net.ssid.c_str(), why);
+            launcherWifiStop(); // Ends the try, so the next one starts clean.
+            if (attempt < kLaunchJoinTries) vTaskDelay(pdMS_TO_TICKS(kLaunchRetryMs));
+        }
+    }
+    return false;
+}
+
+// A task of its own, so the menu works meanwhile. It draws nothing, and gets the saved
+// networks copied for it, so it never touches the settings the menu uses.
+void launchJoinTask(void *arg) {
+    auto *saved = static_cast<std::vector<SavedNetwork> *>(arg);
+    if (joinSavedNetwork(*saved)) {
+        launcherWifiPowerSave(true); // Nothing at the menu needs full speed.
+#if defined(OMARCHY_CLOCK)
+        omarchyClockStart();
+#endif
+    } else {
+        launcherWifiStop(); // No saved network here: the radio is off until something needs WiFi.
+    }
+    delete saved;
+    launchJoinBusy = false;
+    vTaskDelete(nullptr);
+}
+} // namespace
+
+void launcherWifiAtLaunch() {
+    if (!autoConnect || launchJoinBusy || launcherWifiIsConnected()) return;
+    std::unique_ptr<std::vector<SavedNetwork>> saved(new (std::nothrow) std::vector<SavedNetwork>());
+    if (!saved) return;
+    for (const LauncherSavedWifiNetwork &net : getSavedWifiNetworks()) {
+        String password;
+        if (getWifiCredential(net.ssid, password)) saved->push_back({net.ssid, password});
+    }
+    if (saved->empty()) return;
+    // Started from this task, like everywhere else in the Launcher, so only the scan and the
+    // join run in the background.
+    if (!launcherWifiStartSta()) return;
+    launchJoinBusy = true;
+    if (xTaskCreate(launchJoinTask, "wifi_launch", 6144, saved.get(), tskIDLE_PRIORITY + 1, nullptr) == pdPASS) {
+        saved.release(); // The task deletes it.
+    } else {
+        launchJoinBusy = false;
+    }
+}
+
+void launcherWifiAtLaunchWait() {
+    if (!launchJoinBusy) return;
+    displayRedStripe("Connecting to WiFi...");
+    while (launchJoinBusy) vTaskDelay(pdMS_TO_TICKS(50));
+}
+#endif
+
 bool ensureWifiConnected(const String &ssid, int encryptation, bool isAP) {
     RAM_LOG("ensureWifiConnected-start");
+#if defined(OMARCHY_WIFI_AT_LAUNCH)
+    launcherWifiAtLaunchWait();
+#endif
     if (launcherWifiIsConnected() && !isAP) {
+#if defined(OMARCHY_WIFI_AT_LAUNCH)
+        launcherWifiPowerSave(false); // Whatever asked for WiFi gets full speed.
+#endif
 #if defined(OMARCHY_CLOCK)
         omarchyClockStart();
 #endif

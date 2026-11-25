@@ -2581,6 +2581,13 @@ void stopWebServerAndWifi() {
     vTaskDelay(pdTICKS_TO_MS(100));
 #if CONFIG_ESP_HOSTED_ENABLED
     launcherWifiStartSta();
+#elif defined(OMARCHY_WIFI_AT_LAUNCH)
+    // WiFi stays on for the rest of the Launcher. Only Web UI's own access point is closed,
+    // and the saved network joined again.
+    if (webUiApMode) {
+        launcherWifiStop();
+        launcherWifiAtLaunch();
+    }
 #else
     launcherWifiStop();
 #endif
@@ -2604,6 +2611,9 @@ void startWebUi(const String &ssid, int encryptation, bool mode_ap) {
     config.httppassword = wui_pwd;
     config.webserverporthttp = default_webserverporthttp;
 
+#if defined(OMARCHY_WIFI_AT_LAUNCH)
+    launcherWifiAtLaunchWait(); // A join at launch still going would fight the access point.
+#endif
     if (launcherWifiIsConnected() && mode_ap) launcherWifiStop();
     RAM_LOG("startWebUi-before-wifi");
     if (!ensureWifiConnected(ssid, encryptation, mode_ap)) return;
