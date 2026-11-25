@@ -240,11 +240,8 @@ void TouchFooter2(uint16_t color) {
 ***************************************************************************************/
 void initDisplay(bool doAll) {
 #ifndef HEADLESS
-    // Credit shown in the corner, as on upstream's bootscreen.
-    static uint8_t _name = launcherRandom(0, 3);
-    String name = "@Pirata";
-    if (_name == 1) name = "u/bmorcelli";
-    else if (_name == 2) name = "gh/bmorcelli";
+    // The maker of this Omarchy edition, in the corner.
+    const String name = "x.com/@devsec_ai";
 
 #ifdef E_PAPER_DISPLAY // epaper display draws only once
     static bool runOnce = false;
