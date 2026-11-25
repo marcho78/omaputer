@@ -33,10 +33,15 @@ constexpr int64_t kFrameMicros = 1000000 / 120; // Omarchy runs ttfx at --frame-
 constexpr int kMaxStepsPerDraw = 4;             // Catch-up limit after a slow frame.
 constexpr uint32_t kHoldMillis = 1000;          // A finished logo stays up this long.
 constexpr uint32_t kQuietMillis = 300;          // Longer than the keyboard's 200 ms key repeat.
-// Playing took at most 122.7 KB of heap on the Cardputer (the 64.8 KB frame plus the hungriest
-// effect, measured over all six), so start only with that plus room for the rest of the
-// Launcher, which needs more while WiFi is on. Starting short could abort in an effect.
-constexpr unsigned kMinFreeHeap = 150000;
+// Playing took at most 61.8 KB of heap on the Cardputer Adv with WiFi on (the 2.9 KB strip
+// plus the hungriest effect, measured over all six), so start only with that plus 27 KB of
+// room for the rest of the Launcher, which needs more while WiFi is on. Starting short could
+// abort in an effect.
+constexpr unsigned kMinFreeHeap = 90000;
+// The biggest single block an effect asks for (rain and middleout: 19.2 KB, measured on the
+// laptop, whose 64-bit sizes are no smaller). With WiFi on, memory can be in pieces too small
+// for it even when there is enough in all.
+constexpr unsigned kMinBlock = 20000;
 
 // A dimmed or dark screen means the Dim setting got there first, so dimming wins.
 bool screenAwake() { return !dimmer && !isScreenOff && !isSleeping; }
@@ -61,28 +66,32 @@ bool enoughMemory() {
 #if defined(USE_NATIVE_SDL)
     return true;
 #else
-    return freeHeap() >= kMinFreeHeap;
+    return freeHeap() >= kMinFreeHeap && largestBlock() >= kMinBlock;
 #endif
 }
 
-// The frame holds RGB565 with its two bytes swapped, the order the panel takes, so it is
-// sent as it is.
-void present(const ofx::Framebuffer &frame) {
-    omarchy::pushFrame(frame.data(), 0, 0, ofx::kScreenWidth, ofx::kScreenHeight);
-}
+// Sends each strip to the screen as an effect draws it. A strip holds RGB565 with its two
+// bytes swapped, the order the panel takes, so it is sent as it is.
+struct DisplaySink : ofx::StripSink {
+    void show(const ofx::Strip &strip) override {
+        omarchy::pushFrame(strip.data(), 0, strip.top(), ofx::kScreenWidth, ofx::Strip::kHeight);
+    }
+};
 
 // Plays until a key is pressed, then clears the screen. Returns false, having drawn nothing,
 // if there is not enough memory to play.
 bool play() {
     launcherConsolePrintf("Screensaver: start, free heap %u, largest block %u\n", freeHeap(), largestBlock());
-    std::unique_ptr<ofx::Framebuffer> frame;
-    if (enoughMemory()) frame.reset(new (std::nothrow) ofx::Framebuffer());
-    if (!frame) {
+    std::unique_ptr<ofx::Strip> strip;
+    if (enoughMemory()) strip.reset(new (std::nothrow) ofx::Strip());
+    if (!strip) {
         launcherConsolePrintln("Screensaver: not enough memory, skipped");
         previousMillis = launcherMillis(); // The idle start tries again after the next idle period.
         return false;
     }
     launcherWaitForQuietInput(kQuietMillis); // The key that started it, or one no menu used.
+    tft->fillScreen(BLACK); // The effects draw only the rows the logo uses, on black.
+    DisplaySink display;
 
     const ofx::Logo logo = ofx::parse_logo(ofx::kOmarchyLogo);
     const ofx::CellGrid grid(logo.width, ofx::CellGrid::kMaxRows);
@@ -134,8 +143,7 @@ bool play() {
         if (now >= nextStep) nextStep = now; // Too far behind: drop the backlog.
 
         if (steps > 0) {
-            effect->draw(*frame, grid);
-            present(*frame);
+            effect->draw(*strip, grid, display);
             ++draws;
             lowest = std::min(lowest, freeHeap());
         }
@@ -144,7 +152,7 @@ bool play() {
     launcherWaitForQuietInput(kQuietMillis); // The key that stopped it, and its repeats.
 
     effect.reset();
-    frame.reset();
+    strip.reset();
     tft->fillScreen(BGCOLOR);
     previousMillis = launcherMillis();
     launcherConsolePrintf(

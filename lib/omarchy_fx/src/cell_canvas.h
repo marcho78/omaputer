@@ -1,5 +1,5 @@
 // One frame of character cells. Effects paint visible characters in ascending id order,
-// so the highest id wins a shared cell, as in ttfx. render() redraws only changed cells.
+// so the highest id wins a shared cell, as in ttfx. render() redraws only changed rows.
 #pragma once
 
 #include <cstdint>
@@ -18,8 +18,9 @@ public:
     // as in ttfx. Positions off the canvas are ignored.
     void put(int col, int row, uint32_t glyph, Rgb color);
 
-    // Draws the cells that changed since the previous render, or all of them the first time.
-    void render(Framebuffer& fb, const CellGrid& grid);
+    // Draws each row holding a cell that changed since the previous render into strip, and
+    // shows it on sink; the first time, every row.
+    void render(Strip& strip, const CellGrid& grid, StripSink& sink);
 
 private:
     struct Cell {

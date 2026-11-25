@@ -23,9 +23,11 @@ public:
     // Returns false once the effect has finished with the logo fully drawn.
     virtual bool step() = 0;
 
-    // Draws the current frame into fb. Only cells that changed since the last draw are
-    // redrawn, so keep passing the same framebuffer for the life of the effect.
-    virtual void draw(Framebuffer& fb, const CellGrid& grid) = 0;
+    // Draws the current frame a row of cells at a time into strip, showing each on sink.
+    // Only rows that changed since the last draw are drawn (the first draw does them all), so
+    // keep showing an effect on the same screen for its whole life. Nothing is drawn outside
+    // the grid's rows, so that screen should start black.
+    virtual void draw(Strip& strip, const CellGrid& grid, StripSink& sink) = 0;
 };
 
 int effect_count();

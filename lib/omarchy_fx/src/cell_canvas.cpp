@@ -1,5 +1,7 @@
 #include "cell_canvas.h"
 
+#include <algorithm>
+
 namespace ofx {
 namespace {
 constexpr Rgb kBackground{0, 0, 0};  // Omarchy's screensaver sets a black terminal background.
@@ -24,18 +26,17 @@ void CellCanvas::put(int col, int row, uint32_t glyph, Rgb color) {
     cell = glyph == ' ' ? Cell{} : Cell{glyph, color};
 }
 
-void CellCanvas::render(Framebuffer& fb, const CellGrid& grid) {
-    if (redraw_all_) fb.clear(kBackground);
+void CellCanvas::render(Strip& strip, const CellGrid& grid, StripSink& sink) {
     for (int r = 0; r < rows_; ++r) {
-        for (int c = 0; c < cols_; ++c) {
-            const size_t i = static_cast<size_t>(r * cols_ + c);
-            if (!redraw_all_) {
-                if (now_[i] == shown_[i]) continue;
-                fill_cell(fb, grid, c, r, kBackground);
-            }
-            draw_symbol(fb, grid, c, r, now_[i].glyph, now_[i].color);
-            shown_[i] = now_[i];
-        }
+        const auto now = now_.begin() + r * cols_;
+        const auto shown = shown_.begin() + r * cols_;
+        if (!redraw_all_ && std::equal(now, now + cols_, shown)) continue;
+        // The strip holds only this row, so all of its cells are drawn, not just the changed ones.
+        strip.move_to(grid.y(r));
+        strip.clear(kBackground);
+        for (int c = 0; c < cols_; ++c) draw_symbol(strip, grid, c, r, now[c].glyph, now[c].color);
+        std::copy(now, now + cols_, shown);
+        sink.show(strip);
     }
     redraw_all_ = false;
 }

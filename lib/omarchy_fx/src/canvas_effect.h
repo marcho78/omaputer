@@ -22,10 +22,10 @@ public:
         build();
     }
 
-    void draw(Framebuffer& fb, const CellGrid& grid) final {
+    void draw(Strip& strip, const CellGrid& grid, StripSink& sink) final {
         canvas_.clear();
         paint(canvas_);
-        canvas_.render(fb, grid);
+        canvas_.render(strip, grid, sink);
     }
 
 protected:
