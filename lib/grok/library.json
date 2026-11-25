@@ -1,0 +1,8 @@
+{
+  "name": "grok",
+  "version": "1.0.0",
+  "description": "Grok's face, WebSocket framing and an audio ring buffer, for the Launcher's Grok voice chat. See README.md.",
+  "headers": "grok_face.h",
+  "frameworks": "*",
+  "platforms": "*"
+}

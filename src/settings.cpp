@@ -7,6 +7,7 @@
 #include "mykeyboard.h"
 #include "nvs.h"
 #include "nvs_helpers.h"
+#include "omarchy_grok.h"
 #include "onlineLauncher.h"
 #include "partitioner.h"
 #include "powerSave.h"
@@ -762,6 +763,9 @@ void settings_menu() {
                                    releaseHeapObjectsAndReboot();
                                }});
         }
+#if defined(OMARCHY_GROK)
+        options.push_back({"Grok", [=]() { omarchyGrokSettingsMenu(); }});
+#endif
         options.push_back({"Format SD Card", [=]() { formatSdCard(); }});
         options.push_back({"Reset Configs/Wifi", factoryReset});
         options.push_back({"Restart", [=]() { return (void)releaseHeapObjectsAndReboot(); }});

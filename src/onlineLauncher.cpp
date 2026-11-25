@@ -8,6 +8,7 @@
 #include "install_shared.h"
 #include "littlefs_patch.h"
 #include "mykeyboard.h"
+#include "omarchy_clock.h"
 #include "partition_install_layout.h"
 #include "partition_table_model.h"
 #include "powerSave.h"
@@ -119,6 +120,9 @@ bool wifiConnect(const String &ssid, int encryptation, bool isAP) {
     }
     launcherDelayMs(0);
     RAM_LOG("wifiConnect-end");
+#if defined(OMARCHY_CLOCK)
+    if (!isAP && launcherWifiIsConnected()) omarchyClockStart();
+#endif
     return isAP || launcherWifiIsConnected();
 }
 bool connectWifi() {
@@ -162,7 +166,12 @@ bool connectWifi() {
 
 bool ensureWifiConnected(const String &ssid, int encryptation, bool isAP) {
     RAM_LOG("ensureWifiConnected-start");
-    if (launcherWifiIsConnected() && !isAP) return true;
+    if (launcherWifiIsConnected() && !isAP) {
+#if defined(OMARCHY_CLOCK)
+        omarchyClockStart();
+#endif
+        return true;
+    }
     if (isAP) return wifiConnect(ssid, encryptation, true);
     if (!ssid.isEmpty()) return wifiConnect(ssid, encryptation, false);
     return connectWifi();

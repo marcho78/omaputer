@@ -6,6 +6,7 @@
 #include "idf/launcher_platform.h"
 #include "install_shared.h"
 #include "nvs_helpers.h"
+#include "omarchy_grok.h"
 #include "partition_install_layout.h"
 #include "partition_table_model.h"
 #include "settings.h"
@@ -940,6 +941,9 @@ static void printHelp() {
     launcherConsolePrintln("  wifi hosted retry");
     launcherConsolePrintln("  settings get");
     launcherConsolePrintln("  settings set <json>");
+#if defined(OMARCHY_GROK)
+    launcherConsolePrintln("  xai-key <key|clear>  (Grok's xAI API key)");
+#endif
 #if defined(SDIO2_CLK)
     launcherConsolePrintln("  sdio show");
     launcherConsolePrintln("  sdio set <clk> <cmd> <d0> <d1> <d2> <d3> <rst>");
@@ -989,6 +993,15 @@ static void handleSerialCommand(const String &line) {
 #if defined(SDIO2_CLK)
     } else if (cmd.equalsIgnoreCase("sdio") && tokens.size() >= 2) {
         handleSdioCommand(tokens);
+#endif
+#if defined(OMARCHY_GROK)
+    } else if (cmd.equalsIgnoreCase("xai-key") && tokens.size() >= 2) {
+        // Never echoes the key.
+        if (tokens[1].equalsIgnoreCase("clear")) {
+            launcherConsolePrintln(omarchyGrokClearKey() ? "OK xAI key removed" : "ERR couldn't remove the xAI key");
+        } else {
+            launcherConsolePrintln(omarchyGrokSetKey(tokens[1]) ? "OK xAI key saved" : "ERR couldn't save the xAI key");
+        }
 #endif
     } else if (cmd.equalsIgnoreCase("version")) {
         printVersion();

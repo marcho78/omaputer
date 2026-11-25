@@ -12,6 +12,7 @@
 #include <SD.h>
 #include <SPIFFS.h>
 
+#include "omarchy_grok.h"
 #include "omarchy_screensaver.h"
 #include "powerSave.h"
 #include "ram_profile.h"
@@ -546,6 +547,10 @@ void loop() {
         );
     }
 
+#if defined(OMARCHY_GROK)
+    // Longer than an installed app's 5-letter icon, so it can't match one.
+    menuItems.push_back({"GROKVOICE", "Talk to Grok", [=]() { omarchyGrok(); }});
+#endif
 #if defined(OMARCHY_SCREENSAVER)
     // The name is longer than an installed app's 5-letter icon, so it can't match one.
     menuItems.push_back({"SCREENSAVER", "Start the screensaver", [=]() { omarchyScreensaverNow(); }});

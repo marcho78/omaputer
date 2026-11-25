@@ -6,7 +6,8 @@
 //   flasher.meshcore.dev) DigiCert Global Root G2 — DigiCert (m5burner-cdn.m5stack.com) Sectigo Root E46 —
 //   Sectigo/USERTrust (github.com) GlobalSign Root CA — GlobalSign
 //   (*.oss-cn-shenzhen.aliyuncs.com, M5Burner firmware CDN)
-static const char kRootCAs[] = R"(
+// inline: one copy in flash however many files include this (HTTPS and Grok).
+inline constexpr char kRootCAs[] = R"(
 -----BEGIN CERTIFICATE-----
 MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
 TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
