@@ -18,6 +18,7 @@
 #include "omarchy_clock.h"
 #endif
 #if defined(OMARCHY_GROK)
+#include "omarchy_chat.h"
 #include "omarchy_grok.h"
 #endif
 #include "omarchy_screensaver.h"
@@ -1343,6 +1344,9 @@ esp_err_t systemInfoHandler(httpd_req_t *req) {
 #if defined(HAS_KEYBOARD)
     doc["KEYS"] = true; // .bin files can be bound to a key.
 #endif
+#if defined(OMARCHY_GROK)
+    doc["CHAT"] = true; // The portal's 6 chat, with Grok.
+#endif
 #if defined(OMARCHY_CLOCK)
     doc["CLOCK"] = omarchyClockDateTime(); // Empty until the clock is set.
 #endif
@@ -2421,6 +2425,21 @@ esp_err_t fallbackHandler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+#if defined(OMARCHY_GROK)
+// The portal's chat: its requests go to xAI's Responses API through the Cardputer, which adds
+// the saved xAI key (omarchy_chat.cpp).
+esp_err_t chatHandler(httpd_req_t *req) {
+    if (!checkUserWebAuth(req)) return ESP_OK;
+    return omarchyChatRelay(req, HTTP_POST, "/v1/responses");
+}
+
+// The models the xAI key can use, for the chat's model picker.
+esp_err_t chatModelsHandler(httpd_req_t *req) {
+    if (!checkUserWebAuth(req)) return ESP_OK;
+    return omarchyChatRelay(req, HTTP_GET, "/v1/models");
+}
+#endif
+
 void registerHandler(const char *uri, httpd_method_t method, esp_err_t (*handler)(httpd_req_t *)) {
     httpd_uri_t route = {};
     route.uri = uri;
@@ -2472,6 +2491,10 @@ void configureWebServer() {
     registerHandler("/settings", HTTP_POST, settingsHandler);
     registerHandler("/wifi", HTTP_POST, wifiHandler);
     registerHandler("/action", HTTP_POST, actionHandler);
+#if defined(OMARCHY_GROK)
+    registerHandler("/chat", HTTP_POST, chatHandler);
+    registerHandler("/chatmodels", HTTP_GET, chatModelsHandler);
+#endif
     registerHandler("/*", HTTP_GET, fallbackHandler);
     registerHandler("/*", HTTP_POST, fallbackHandler);
 }

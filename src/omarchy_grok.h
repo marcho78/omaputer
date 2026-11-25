@@ -21,6 +21,9 @@ void omarchyGrokSettingsMenu();
 // erases it too. For the menu above and the serial console.
 bool omarchyGrokSetKey(const String &key);
 bool omarchyGrokClearKey();
+// The saved key, or empty: for the web portal's chat, which asks xAI through the Cardputer so
+// the key never reaches the browser.
+String omarchyGrokKey();
 
 // For the WebUI's Settings page: what Settings > Grok shows (whether an xAI key is saved,
 // never the key itself) and the voices to pick from.

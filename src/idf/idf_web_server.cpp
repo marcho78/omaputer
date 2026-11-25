@@ -9,7 +9,12 @@ httpd_handle_t launcherWebServerStart(uint16_t port) {
     // lru_purge_enable silently killed a queued upload whenever a third connection
     // appeared. LWIP is built with 16 sockets, so five is comfortably within budget.
     config.max_open_sockets = 5;
-    config.max_uri_handlers = 40; // 33 are registered (configureWebServer); a slot is one pointer.
+    config.max_uri_handlers = 40; // Up to 35 are registered (configureWebServer); a slot is one pointer.
+#if defined(OMARCHY_GROK)
+    // The portal's chat opens its TLS connection to xAI inside a request handler, which
+    // needs more stack than the default 4 KB: a chat reply took 3.9 KB on the Cardputer.
+    config.stack_size = 8192;
+#endif
     config.lru_purge_enable = true;
     // A queued upload can sit idle while the previous file is written to the SD card;
     // ten seconds was short enough for slow cards to time it out mid-batch. Kept a bit

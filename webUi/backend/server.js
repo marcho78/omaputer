@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const http = require('http');
+const https = require('https');
 const fs   = require('fs');
 const path = require('path');
 const url  = require('url');
@@ -769,9 +770,28 @@ const server = http.createServer(async (req, res) => {
       CHARGING: false,
       WIFI: { ap: false, ip: '192.168.1.42', ssid: 'MyNetwork', rssi: -58 },
       KEYS: true,
+      CHAT: true,
       CLOCK: clockText(),
     });
     return sendJson(body);
+  }
+
+  // POST /chat, GET /chatmodels: the portal's chat, passed on to xAI the way the device does
+  // (src/omarchy_chat.cpp), with the key from XAI_API_KEY in this computer's environment.
+  if ((pathname === '/chat' && method === 'POST') || (pathname === '/chatmodels' && method === 'GET')) {
+    const key = process.env.XAI_API_KEY;
+    if (!key) return send(400, 'application/json', JSON.stringify({ error: 'No xAI key yet: start this server with XAI_API_KEY set.' }));
+    const body = method === 'POST' ? await readBody(req) : null;
+    const headers = { Authorization: `Bearer ${key}`, Accept: 'text/event-stream, application/json' };
+    if (body) Object.assign(headers, { 'Content-Type': 'application/json', 'Content-Length': body.length });
+    const up = https.request({ host: 'api.x.ai', path: pathname === '/chat' ? '/v1/responses' : '/v1/models', method, headers }, xr => {
+      res.writeHead(xr.statusCode, { 'Content-Type': xr.headers['content-type'] || 'application/json', 'Cache-Control': 'no-store' });
+      xr.pipe(res);
+    });
+    up.on('error', () => { if (!res.headersSent) send(502, 'application/json', JSON.stringify({ error: "Can't reach xAI." })); });
+    res.on('close', () => { if (!res.writableEnded) up.destroy(); }); // the page stopped the reply
+    if (body) up.write(body);
+    return up.end();
   }
 
   // GET /settings   POST /settings (JSON of the keys that change)

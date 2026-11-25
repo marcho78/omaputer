@@ -48,6 +48,7 @@
     <a href="#files">3<span>files</span></a>
     <a href="#partitions">4<span>partitions</span></a>
     <a href="#settings">5<span>settings</span></a>
+    <a href="#chat" id="ws-chat" hidden>6<span>chat</span></a>
   </nav>
   <time id="clock"></time>
   <div class="tray">
@@ -205,6 +206,32 @@
         <button data-act="off" class="dng">turn off</button>
       </div>
     </article>
+  </section>
+
+  <section class="page chat" data-p="chat" hidden>
+    <aside class="ch-rail" id="ch-rail" aria-label="Saved chats">
+      <button class="ch-new" id="ch-new" type="button">+ new chat</button>
+      <div id="ch-list"></div>
+      <p class="ch-where">saved on the SD card, in /chats</p>
+    </aside>
+    <div class="ch-talk">
+      <div class="ch-head">
+        <button class="ch-chats" id="ch-chats" type="button" aria-controls="ch-rail" aria-expanded="false">&#8801; chats</button>
+        <span class="ch-who" id="ch-who">Grok</span>
+        <label for="ch-model" hidden>Model</label>
+        <select id="ch-model"></select>
+        <button class="ch-tog" id="ch-skills" type="button" aria-pressed="true">device skills</button>
+        <button class="ch-tog" id="ch-web" type="button" aria-pressed="true">web search</button>
+        <span class="ch-use" id="ch-use"></span>
+      </div>
+      <div class="ch-log" id="ch-log"><div class="ch-inner" id="ch-inner"></div></div>
+      <form class="ch-box" id="ch-box">
+        <span class="ch-p" aria-hidden="true">&#8250;</span>
+        <label for="ch-msg" hidden>Message</label>
+        <textarea id="ch-msg" rows="1" placeholder="message Grok &#183; enter sends &#183; shift+enter adds a line"></textarea>
+        <button class="ch-send" id="ch-send" type="submit">send &#8629;</button>
+      </form>
+    </div>
   </section>
 </main>
 

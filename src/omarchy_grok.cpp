@@ -432,6 +432,8 @@ bool omarchyGrokClearKey() {
     return lnvs::eraseKey(handle.raw(), kKeyName) && handle.commit();
 }
 
+String omarchyGrokKey() { return lnvs::getString(kKeyNamespace, kKeyName); }
+
 void omarchyGrokSettingsJson(JsonObject out) {
     const groksession::Options o = loadOptions();
     out["duo"] = o.duo;

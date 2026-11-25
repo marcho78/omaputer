@@ -105,8 +105,9 @@ function ask({ title, text = '', fields = [], ok = 'ok', danger = false }) {
   }, { once: true }));
 }
 
-// ── Sections: the bar's numbered workspaces, also keys 1-5 ─────────────────────────────
-const PAGES = ['overview', 'apps', 'files', 'partitions', 'settings'];
+// ── Sections: the bar's numbered workspaces, also keys 1-6 ─────────────────────────────
+// 6 chat exists only on a device built with Grok (info.CHAT).
+const PAGES = ['overview', 'apps', 'files', 'partitions', 'settings', 'chat'];
 let page = '';
 let filesLoaded = false;
 function route() {
@@ -117,13 +118,14 @@ function route() {
   if (page === 'files' && !filesLoaded) { filesLoaded = true; ls('/'); }
   if (page === 'partitions') loadParts();
   if (page === 'settings') loadSettings();
+  if (page === 'chat') chatShow();
 }
 addEventListener('hashchange', route);
 addEventListener('keydown', e => {
   if (e.key === 'Escape') $('#pmenu').hidden = true;
   if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest('input,select,textarea,dialog')) return;
-  const n = '12345'.indexOf(e.key);
-  if (n >= 0) location.hash = PAGES[n];
+  const n = '123456'.indexOf(e.key);
+  if (n >= 0 && (PAGES[n] !== 'chat' || info?.CHAT)) location.hash = PAGES[n];
   else if (e.key === '/' && page === 'files') { e.preventDefault(); $('#filter').focus(); }
 });
 
@@ -147,6 +149,9 @@ async function status() {
     return;
   }
   dev = (info.DEVICE || 'device').replace(/^(M5Stack|M5|LilyGO|Lilygo)\s+/, '');
+  $('#ws-chat').hidden = !info.CHAT;
+  if (!info.CHAT && page === 'chat') location.hash = 'overview';
+  if (page === 'chat' && chat && !chat.items.length) chatRender(); // its welcome names the device
   renderBar();
   renderOverview();
   renderApps();
@@ -1005,6 +1010,663 @@ editor.addEventListener('keydown', e => {
 });
 $('#ed').addEventListener('cancel', e => { e.preventDefault(); edClose(); });
 for (const d of $$('dialog')) d.addEventListener('close', () => toastHost().append($('#toasts')));
+
+// ── 6 chat: Grok, with skills that use the Cardputer ─────────────────────────────────────
+// Messages go to xAI's Responses API through the device (POST /chat), which adds the xAI key
+// saved in Settings, so the key never reaches this page. xAI keeps each conversation for 30
+// days, so a message carries only what is new (previous_response_id). Grok uses the device
+// through SKILLS: reading runs at once, a change waits here for allow or deny, and the
+// riskiest need a word typed. Passwords and keys never go to Grok. Chats are saved on the SD
+// card, a file each in /chats, named by when they started and how they began.
+const CHAT_DIR = '/chats';
+const CHAT_MODEL = 'grok-4.7';  // xAI's recommended chat model
+const CHAT_ROUNDS = 12;         // skill rounds for one message, so a confused reply can't go on forever
+const USD_TICKS = 1e10;         // xAI gives the cost in ticks of a ten-billionth of a dollar
+const CHAT_FILE = /^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d) (.+)\.json$/;
+const CHAT_HELLO = ["What's the battery at, and which apps are installed?", 'Which .bin files on the SD card are not installed yet?', 'Turn the screen brightness down to 40%.'];
+const CHAT_SWITCHES = { bootToApp: 'boot_to_launcher', autoConnect: 'auto_connect_wifi', onlyBins: 'show_all_files', noDotFiles: 'show_dotfiles', autoBackup: 'auto_backup', askSpiffs: 'ask_copy_spiffs', DDLB: 'deep_sleep_starts_launcher', dev: 'developer_mode' };
+// Per-browser choices: the two toggles and the skills always allowed.
+const prefs = {
+  get(k, d) { try { const v = localStorage.getItem('chat.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('chat.' + k, JSON.stringify(v)); } catch {} },
+};
+let chat = null, chatFiles = [], chatModels = null, chatGrok = {}, chatRunning = false, chatStop = null, chatPending = null, chatFrame = 0;
+let chatSaving = Promise.resolve();
+const newChat = () => ({ v: 1, file: '', created: Date.now(), model: chat?.model || CHAT_MODEL, last: null, pending: null, ticks: 0, tokens: 0, items: [] });
+const chatPath = p => '/' + String(p ?? '').split('/').filter(s => s && s !== '.').join('/');
+const jStr = description => ({ type: 'string', description });
+const jInt = description => ({ type: 'integer', description });
+const jObj = (properties = {}, required = []) => ({ type: 'object', properties, required });
+class ChatError extends Error { constructor(status, message) { super(message); this.status = status; } }
+
+// Settings as Grok sees them: plain names, no passwords, no keys.
+function chatSettingsView(s) {
+  const theme = THEMES.find(t => t[1] === s.FGCOLOR && t[2] === s.BGCOLOR), switches = {};
+  for (const [k, inv] of TOGGLES) switches[CHAT_SWITCHES[k]] = inv ? !s[k] : !!s[k];
+  return {
+    brightness_percent: s.bright, dim_after_seconds: s.dimmerSet, boot_wait_seconds: s.bootTimer + 1,
+    rotation: s.rotation, rotations: (s.rotations || []).map(r => r.value), network_name: s.hostname || s.hostAuto,
+    theme: theme ? theme[0] : 'custom', themes: THEMES.map(t => t[0]), switches, key_shortcuts: s.shortcuts || {},
+    wifi_networks: (s.wifi || []).map(n => ({ network: n.ssid, password_saved: !!n.pwd })),
+    grok: s.grok ? { name: s.grok.name, personality: s.grok.persona, voice: s.grok.voice, voices: s.grok.voices, duo: s.grok.duo, start_muted: s.grok.muted, xai_key_saved: s.grok.hasKey } : null,
+    clock: s.clock ? { local_time: s.clock.local, time_zone: s.clock.tz } : null,
+  };
+}
+// Grok's change_settings arguments, as the device's /settings takes them.
+function chatSettingsChange(a) {
+  const c = {};
+  if (a.brightness_percent != null) c.bright = Math.min(100, Math.max(5, Math.round(a.brightness_percent / 5) * 5));
+  if (a.dim_after_seconds != null) c.dimmerSet = a.dim_after_seconds;
+  if (a.boot_wait_seconds != null) c.bootTimer = Math.min(5, Math.max(1, a.boot_wait_seconds)) - 1;
+  if (a.rotation != null) c.rotation = a.rotation;
+  if (a.network_name != null) c.hostname = a.network_name;
+  const t = THEMES.find(x => x[0] === a.theme);
+  if (t) Object.assign(c, { FGCOLOR: t[1], BGCOLOR: t[2], ALCOLOR: t[3], odd: t[4], even: t[5] });
+  for (const [k, inv] of TOGGLES) { const v = a.switches?.[CHAT_SWITCHES[k]]; if (typeof v === 'boolean') c[k] = inv ? !v : v; }
+  if (a.time_zone) c.clock = { tz: a.time_zone };
+  const g = {};
+  for (const [from, to] of [['name', 'name'], ['personality', 'persona'], ['voice', 'voice'], ['duo', 'duo'], ['start_muted', 'muted']]) if (a.grok?.[from] != null) g[to] = a.grok[from];
+  if (Object.keys(g).length) c.grok = g;
+  return c;
+}
+function chatSettingsWhat(a) {
+  const p = [], onOff = v => (v ? 'on' : 'off');
+  if (a.brightness_percent != null) p.push(`brightness ${a.brightness_percent}%`);
+  if (a.dim_after_seconds != null) p.push(a.dim_after_seconds ? `dim after ${a.dim_after_seconds} s` : 'never dim');
+  if (a.boot_wait_seconds != null) p.push(`boot screen waits ${a.boot_wait_seconds} s`);
+  if (a.rotation != null) p.push(`rotation ${a.rotation}`);
+  if (a.network_name != null) p.push(a.network_name ? `network name ${a.network_name}` : 'automatic network name');
+  if (a.theme) p.push(`theme ${a.theme}`);
+  for (const [k, v] of Object.entries(a.switches || {})) p.push(`${k.replace(/_/g, ' ')} ${onOff(v)}`);
+  if (a.time_zone) p.push(`time zone ${a.time_zone}`);
+  for (const [k, v] of Object.entries(a.grok || {})) p.push(`Grok ${k.replace(/_/g, ' ')} ${typeof v === 'boolean' ? onOff(v) : v}`);
+  return p.join(', ');
+}
+const chatPartWhat = a => a.action === 'create' ? `add a ${a.type || 'data'} partition ${a.label || ''}, ${kb(+a.size || 0)}`
+  : a.action === 'discard' ? 'drop every staged change' : `${a.action} the partition at ${hex(+a.offset || 0)}${a.action === 'resize' ? ' to ' + kb(+a.size || 0) : ''}`;
+
+// What Grok can do on the device. level: read runs at once; ask waits for allow or deny, and
+// can be always allowed; confirm needs its word typed. run() returns a one-line summary for
+// this page, the data Grok gets, and for skills that take the device offline, what to do
+// once Grok has answered (then).
+const SKILLS = {
+  get_status: {
+    level: 'read', about: "The Cardputer's battery, WiFi, SD card space, free memory, uptime, clock, Launcher version and installed apps.",
+    async run() {
+      const i = await getJson('/systeminfo'), w = i.WIFI || {}, sd = i.SD || {};
+      return {
+        summary: [i.BATTERY > 0 ? `battery ${i.BATTERY}%${i.CHARGING ? ', charging' : ''}` : '', w.ap ? 'on its own WiFi' : w.ssid ? `WiFi ${w.ssid}${w.rssi ? `, ${w.rssi} dBm` : ''}` : '', sd.totalBytes ? `SD card ${sd.free} free` : 'no SD card'].filter(Boolean).join(' · '),
+        data: {
+          device: i.DEVICE, launcher_version: i.VERSION, battery_percent: i.BATTERY > 0 ? i.BATTERY : null, charging: !!i.CHARGING,
+          wifi: { network: w.ssid || null, signal_dbm: w.rssi || null, ip: w.ip || null, own_access_point: !!w.ap },
+          sd_card: sd.totalBytes ? { size: sd.total, used: sd.used, free: sd.free } : null, free_memory_bytes: i.HEAP, uptime_seconds: i.UPTIME, clock: i.CLOCK ?? null,
+          installed_apps: (i.APPS || []).map(a => ({ name: a.name, label: a.label })),
+        },
+      };
+    },
+  },
+  list_files: {
+    level: 'read', about: 'Lists a folder on the SD card: its folders, and its files with their sizes.', params: jObj({ path: jStr('The folder, like / or /apps') }, ['path']),
+    async run(a) {
+      const dir = chatPath(a.path), text = await api('/listfiles?folder=' + encodeURIComponent(dir)), entries = [];
+      for (const line of text.split('\n')) {
+        const t = line.slice(0, 2), at = line.lastIndexOf(':'), name = line.slice(3, at);
+        if (t === 'Fo') entries.push({ name, folder: true });
+        else if (t === 'Fi') entries.push({ name, size: line.slice(at + 1) });
+      }
+      const folders = entries.filter(x => x.folder).length, files = entries.length - folders;
+      return { summary: `${dir} · ${folders} folder${folders === 1 ? '' : 's'}, ${files} file${files === 1 ? '' : 's'}`, data: { folder: dir, entries } };
+    },
+  },
+  read_file: {
+    level: 'read', about: 'Reads a text file on the SD card, up to 32 KB of it.', params: jObj({ path: jStr('The file') }, ['path']),
+    async run(a) {
+      const p = chatPath(a.path);
+      let r;
+      try { r = await fetch('/editfile?name=' + encodeURIComponent(p)); } catch { throw new Error(`The ${dev} did not answer.`); }
+      if (!r.ok) throw new Error((await r.text()) || r.statusText);
+      // Stops after 32 KB, so asking for a big app file doesn't bring all of it here.
+      const reader = r.body.getReader(), parts = [];
+      let size = 0;
+      while (size <= MAX_EDIT) { const { value, done } = await reader.read(); if (done) break; parts.push(value); size += value.length; }
+      reader.cancel().catch(() => {});
+      const bytes = new Uint8Array(size);
+      parts.reduce((at, part) => (bytes.set(part, at), at + part.length), 0);
+      if (bytes.includes(0)) throw new Error('not a text file');
+      const cut = size > MAX_EDIT;
+      return { summary: `${p} · ${cut ? 'the first 32 KB' : kb(size)}`, data: { path: p, text: new TextDecoder().decode(bytes.subarray(0, MAX_EDIT)), cut } };
+    },
+  },
+  write_file: {
+    level: 'ask', verb: 'write a file', about: 'Creates or replaces a text file on the SD card, up to 32 KB.', params: jObj({ path: jStr('The file'), content: jStr('The whole text of the file') }, ['path', 'content']),
+    what: a => `${chatPath(a.path)}, ${kb(new Blob([a.content ?? '']).size)}`,
+    note: a => String(a.content ?? '').split('\n').slice(0, 4).join(' / ').slice(0, 200),
+    async run(a) {
+      const p = chatPath(a.path), c = String(a.content ?? '');
+      if (new Blob([c]).size > MAX_EDIT) throw new Error('too big: 32 KB at most');
+      const r = await api('/editfile?name=' + encodeURIComponent(p), { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: c });
+      if (r !== 'OK') throw new Error(r || 'could not save');
+      return { summary: 'saved ' + p };
+    },
+  },
+  make_folder: {
+    level: 'ask', verb: 'make a folder', about: 'Creates a folder on the SD card.', params: jObj({ path: jStr('The new folder') }, ['path']), what: a => chatPath(a.path),
+    run: async a => ({ summary: await api(`/file?name=${encodeURIComponent(chatPath(a.path))}&action=create`) }),
+  },
+  rename: {
+    level: 'ask', verb: 'rename', about: 'Renames a file or folder on the SD card. It stays in the same folder.', params: jObj({ path: jStr('What to rename'), new_name: jStr('Its new name, without a folder') }, ['path', 'new_name']),
+    what: a => `${chatPath(a.path)} to ${a.new_name}`, run: async a => ({ summary: await post('/rename', { filePath: chatPath(a.path), fileName: String(a.new_name) }) }),
+  },
+  delete: {
+    level: 'ask', verb: 'delete', about: 'Deletes a file, or a folder with everything in it, from the SD card.', params: jObj({ path: jStr('What to delete') }, ['path']),
+    what: a => chatPath(a.path), note: () => 'This cannot be undone.', run: async a => ({ summary: await api(`/file?name=${encodeURIComponent(chatPath(a.path))}&action=delete`) }),
+  },
+  get_settings: {
+    level: 'read', about: "The Launcher's settings: screen, theme, on/off switches, key shortcuts, saved WiFi networks (names only), Grok's voice settings and the clock.",
+    run: async () => ({ summary: 'read the settings', data: chatSettingsView(await getJson('/settings')) }),
+  },
+  change_settings: {
+    level: 'ask', verb: 'change settings', about: 'Changes Launcher settings. Give only the ones to change.',
+    params: jObj({
+      brightness_percent: { type: 'integer', minimum: 5, maximum: 100, description: 'Screen brightness, in steps of 5' },
+      dim_after_seconds: { type: 'integer', enum: DIM_TIMES.map(d => d[0]), description: 'Dim the screen after this long without a key press; 0 for never' },
+      boot_wait_seconds: { type: 'integer', minimum: 1, maximum: 5, description: 'How long the boot screen waits for a key' },
+      rotation: jInt('Screen rotation: one of the values get_settings lists'),
+      network_name: jStr('The name the portal answers to, like cardputer for http://cardputer.local; empty for automatic'),
+      theme: { type: 'string', enum: THEMES.map(t => t[0]), description: 'Colour theme' },
+      switches: { type: 'object', description: 'On/off settings to change', properties: Object.fromEntries(Object.values(CHAT_SWITCHES).map(n => [n, { type: 'boolean' }])) },
+      time_zone: jStr('POSIX time zone, like PST8PDT,M3.2.0,M11.1.0'),
+      grok: { type: 'object', description: "Grok's voice settings on the Cardputer", properties: { name: jStr('Its name'), personality: jStr('Its personality, in a few words'), voice: jStr('One of the voices get_settings lists'), duo: { type: 'boolean', description: 'Duo mode, for talking with another Grok' }, start_muted: { type: 'boolean' } } },
+    }),
+    what: chatSettingsWhat,
+    async run(a) {
+      const c = chatSettingsChange(a);
+      if (!Object.keys(c).length) throw new Error('nothing to change');
+      st = await postJson('/settings', c);
+      return { summary: chatSettingsWhat(a), data: { ok: true, settings: chatSettingsView(st) } };
+    },
+  },
+  set_shortcut: {
+    level: 'ask', verb: 'set a key shortcut', about: "Makes a key in the Launcher's main menu install and start a .bin on the SD card.", params: jObj({ key: jStr('One key, like a'), path: jStr('A .bin file on the SD card') }, ['key', 'path']),
+    what: a => `'${a.key}' installs and starts ${chatPath(a.path)}`,
+    async run(a) { st = await postJson('/settings', { bind: { key: String(a.key), path: chatPath(a.path) } }); return { summary: `'${a.key}' set` }; },
+  },
+  remove_shortcut: {
+    level: 'ask', verb: 'remove a key shortcut', about: 'Removes a key shortcut.', params: jObj({ key: jStr('The key') }, ['key']), what: a => `'${a.key}'`,
+    async run(a) { st = await postJson('/settings', { unbind: String(a.key) }); return { summary: `'${a.key}' removed` }; },
+  },
+  forget_wifi: {
+    level: 'ask', verb: 'forget a WiFi network', about: 'Forgets a saved WiFi network.', params: jObj({ network: jStr("The network's name") }, ['network']), what: a => a.network,
+    run: async a => ({ summary: await post('/wifi', { forget: String(a.network) }) }),
+  },
+  add_wifi: {
+    level: 'ask', verb: 'add a WiFi network', secret: 'its password, sent only to the Cardputer',
+    about: 'Saves a WiFi network for the Cardputer to join. The user types its password on this page, so never ask for it.',
+    params: jObj({ network: jStr("The network's name"), open: { type: 'boolean', description: 'True for a network without a password' } }, ['network']),
+    what: a => a.network + (a.open ? ', without a password' : ''),
+    run: async (a, x) => ({ summary: await post('/wifi', { ssid: String(a.network), pwd: a.open ? '' : x.secret || '' }) }),
+  },
+  install_app: {
+    level: 'ask', verb: 'install an app', about: 'Installs a firmware .bin from the SD card into free flash space. The Cardputer shows the progress on its screen.', params: jObj({ path: jStr('The .bin file on the SD card') }, ['path']),
+    what: a => chatPath(a.path), run: async a => ({ summary: await post('/UPDATE', { fileName: chatPath(a.path) }) }),
+  },
+  start_app: {
+    level: 'ask', verb: 'start an app', about: 'Starts an installed app. The Cardputer leaves the Launcher, so this chat goes offline.', params: jObj({ label: jStr("The app's label, from get_status") }, ['label']),
+    what: a => a.label, note: () => 'The Cardputer leaves the Launcher, and this chat goes offline.',
+    run: async a => ({
+      summary: 'starting ' + a.label,
+      then: async () => { await api('/bootapp', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'label=' + encodeURIComponent(a.label) }); offline(`Starting ${a.label}.`); },
+    }),
+  },
+  restart: {
+    level: 'ask', verb: 'restart the Cardputer', about: 'Restarts the Cardputer into its menu, so this chat goes offline until Web UI is started on it again.',
+    note: () => 'This chat goes offline until Web UI is started on the Cardputer again.',
+    run: async () => ({ summary: 'restarting', then: async () => { await api('/reboot'); offline(`The ${dev} is restarting.`); } }),
+  },
+  turn_off: {
+    level: 'ask', verb: 'turn the Cardputer off', about: 'Turns the Cardputer off, so this chat goes offline.', note: () => 'This chat goes offline. It turns on again with its power switch or G0 button.',
+    run: async () => ({ summary: 'turning off', then: async () => { await post('/action', { do: 'off' }); offline(`The ${dev} is off.`); } }),
+  },
+  start_screensaver: {
+    level: 'ask', verb: 'start the screensaver', about: 'Plays the Omarchy screensaver on the Cardputer until a key is pressed on it.',
+    run: async () => ({ summary: await post('/action', { do: 'screensaver' }) }),
+  },
+  get_partitions: {
+    level: 'read', about: "The Cardputer's flash partition table, with any changes staged but not yet written.",
+    async run() { const t = await getJson('/partitions'); return { summary: `${(t.entries || []).length} partitions${t.dirty ? ', changes staged' : ''}`, data: t }; },
+  },
+  edit_partitions: {
+    level: 'ask', verb: 'stage a partition change', about: 'Stages one change to the partition table. Nothing is written until apply_partitions. Offsets and sizes are in bytes.',
+    params: jObj({
+      action: { type: 'string', enum: ['create', 'delete', 'resize', 'format', 'discard'], description: 'discard drops every staged change' },
+      offset: jInt('The partition, by its offset: for delete, resize and format'), size: jInt('Size in bytes: for create and resize'),
+      label: jStr('Label: for create'), type: { type: 'string', enum: ['app', 'data'], description: 'For create' }, subtype: jStr('For create: ota for an app; fat, spiffs or littlefs for data'),
+    }, ['action']),
+    what: chatPartWhat, note: () => 'Nothing is written until the table is applied.',
+    async run(a) {
+      const f = { action: a.action };
+      for (const k of ['offset', 'size', 'label', 'type', 'subtype']) if (a[k] != null) f[k] = a[k];
+      await post('/partitions', f);
+      return { summary: chatPartWhat(a) + ', staged' };
+    },
+  },
+  apply_partitions: {
+    level: 'confirm', word: 'apply', verb: 'write the partition table', about: 'Writes the staged partition table. Apps in removed or moved partitions are lost, and the Cardputer restarts, so this chat goes offline.',
+    note: () => 'Apps in removed or moved partitions are lost. The Cardputer restarts, and this chat goes offline.',
+    run: async () => ({ summary: 'writing', then: async () => { await post('/partitions', { action: 'apply' }); offline('Writing the partition table and restarting.'); } }),
+  },
+  format_sd: {
+    level: 'confirm', word: 'format', verb: 'format the SD card', about: "Formats the SD card, only if the Cardputer can't read it: a new card, or one formatted for a computer. A card it can read is left as it is.",
+    note: () => "Only a card the Cardputer can't read is formatted.",
+    async run() { busy++; try { return { summary: await post('/action', { do: 'formatsd' }) }; } finally { busy--; } },
+  },
+  reset_settings: {
+    level: 'confirm', word: 'reset', verb: 'reset every Launcher setting', about: 'Puts every Launcher setting back to its default, forgets the saved WiFi networks and erases the xAI key, so this chat stops working until a key is saved again.',
+    note: () => 'Saved WiFi networks are forgotten and the xAI key is erased, so this chat stops working until a key is saved again.',
+    run: async () => ({ summary: await post('/action', { do: 'reset' }) }),
+  },
+};
+
+function chatInstructions() {
+  const name = chatGrok.name || 'Grok', zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return [
+    `You are ${name}, the Grok on the user's ${dev}: an M5Stack Cardputer, a pocket ESP32-S3 computer with a 240x135 screen, a keyboard and an SD card. It runs the Omarchy Launcher, which installs and starts apps (firmware .bin files) from its SD card. The user is chatting with you in the Launcher's web portal, in their browser.`,
+    chatGrok.persona ? `Your personality: ${chatGrok.persona}` : '',
+    `For the user it is ${new Date().toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' })}${zone ? ` (${zone})` : ''}.`,
+    prefs.get('skills', true)
+      ? "You can check and control the Cardputer with your functions; use them instead of guessing. Each function that changes something is shown to the user, who allows or denies it. If one is denied, don't try it again: ask what they want instead. Starting an app, restarting, turning off or writing the partition table takes the Cardputer and this chat offline until Web UI is started on it again, so say that before you do it. Never ask for passwords or keys: when you add a WiFi network the user types its password, and the xAI key and the portal's login are changed in Settings."
+      : "The user turned your device skills off for this chat, so you can't check or change the Cardputer.",
+    'Answer briefly: this is a chat.',
+  ].filter(Boolean).join('\n');
+}
+function chatTools() {
+  const tools = prefs.get('web', true) ? [{ type: 'web_search' }] : [];
+  if (prefs.get('skills', true)) for (const [name, s] of Object.entries(SKILLS)) tools.push({ type: 'function', name, description: s.about, parameters: s.params || jObj() });
+  return tools;
+}
+
+// A safe subset of Markdown: everything is escaped first.
+function chatMd(s) {
+  const inline = t => esc(t)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[\s(])\*([^*\s][^*]*)\*(?=[\s).,!?:;]|$)/g, '$1<i>$2</i>')
+    .replace(/\[\[(\d+)\]\]\((https?:\/\/[^\s)]+)\)/g, '<a class="ch-cite" href="$2" target="_blank" rel="noopener noreferrer">[$1]</a>') // xAI's sources
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  const lines = String(s ?? '').split('\n'), out = [], list = /^\s*([-*+•]|\d+[.)])\s+/, fence = /^\s*```/, head = /^#{1,6}\s/;
+  for (let i = 0; i < lines.length;) {
+    const l = lines[i];
+    if (fence.test(l)) {
+      const code = [];
+      for (i++; i < lines.length && !fence.test(lines[i]); i++) code.push(lines[i]);
+      i++;
+      out.push(`<pre><code>${esc(code.join('\n'))}</code></pre>`);
+    } else if (list.test(l)) {
+      const ordered = /^\s*\d/.test(l), items = [];
+      for (; i < lines.length && list.test(lines[i]); i++) items.push(`<li>${inline(lines[i].replace(list, ''))}</li>`);
+      out.push(ordered ? `<ol>${items.join('')}</ol>` : `<ul>${items.join('')}</ul>`);
+    } else if (head.test(l)) {
+      out.push(`<p><b>${inline(l.replace(/^#+\s*/, ''))}</b></p>`);
+      i++;
+    } else if (!l.trim()) {
+      i++;
+    } else {
+      const para = [];
+      for (; i < lines.length && lines[i].trim() && !fence.test(lines[i]) && !list.test(lines[i]) && !head.test(lines[i]); i++) para.push(inline(lines[i]));
+      out.push(`<p>${para.join('<br>')}</p>`);
+    }
+  }
+  return out.join('');
+}
+
+// ── The page ──
+const chatWho = () => esc((chatGrok.name || 'Grok').toLowerCase());
+const chatGrokBody = (it, i) => chatMd(it.text) + (it.live ? '<span class="ch-wait"></span>' : `<button class="ch-copy" type="button" data-copy="${i}">copy</button>`);
+function chatAskHtml(it) {
+  const sk = SKILLS[it.name] || {};
+  const q = `<div class="ch-q">${esc(chatGrok.name || 'Grok')} wants to <b>${esc(sk.verb || it.name)}</b>${it.what ? ': ' + esc(it.what) : ''}</div>${it.note ? `<div class="ch-n">${esc(it.note)}</div>` : ''}`;
+  if (it.verdict) return `<div class="ch-ask done"><div class="ch-g">?</div><div class="ch-w">${q}<div class="ch-v">${esc(it.verdict)}</div></div></div>`;
+  const field = sk.level === 'confirm' ? `<label class="ch-type">type ${esc(sk.word)} to go ahead<input id="ch-typed" autocomplete="off" spellcheck="false"></label>`
+    : sk.secret && !it.args?.open ? `<label class="ch-type">${esc(sk.secret)}<input id="ch-secret" type="password" autocomplete="off"></label>` : '';
+  const always = sk.level === 'ask' && !sk.secret ? '<label><input type="checkbox" id="ch-always"> always allow this</label>' : '';
+  return `<div class="ch-ask"><div class="ch-g">?</div><div class="ch-w">${q}${field}<div class="ch-act"><button class="ch-allow" id="ch-allow" type="button"${sk.level === 'confirm' ? ' disabled' : ''}>allow</button><button class="ch-deny" id="ch-deny" type="button">deny</button>${always}</div></div></div>`;
+}
+function chatItemHtml(it, i) {
+  if (it.k === 'you') return `<div class="ch-msg you"><div class="ch-l">you</div><div class="ch-b">${chatMd(it.text)}</div></div>`;
+  if (it.k === 'grok') return `<div class="ch-msg grok"${it.live ? ' id="ch-live"' : ''}><div class="ch-l">${chatWho()}</div><div class="ch-b">${chatGrokBody(it, i)}</div></div>`;
+  if (it.k === 'tool') return `<div class="ch-tool${it.state ? ' ' + it.state : ''}"><span class="tn">${esc(it.name)}</span><span class="tr">${esc(it.result || '')}</span></div>`;
+  if (it.k === 'ask') return chatAskHtml(it);
+  return `<div class="ch-note${it.k === 'error' ? ' bad' : ''}">${esc(it.text)}</div>`;
+}
+const chatHelloHtml = () => `<div class="ch-hello"><p>Ask ${esc(chatGrok.name || 'Grok')} about your ${esc(dev)}, or to change something on it: anything that changes it waits for you here first. Every message is billed to your xAI account.</p>${CHAT_HELLO.map(t => `<button type="button" data-hello="${esc(t)}">${esc(t)}</button>`).join('')}</div>`;
+function chatRender(toEnd) {
+  const log = $('#ch-log'), atEnd = toEnd || log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  $('#ch-inner').innerHTML = chat.items.length ? chat.items.map(chatItemHtml).join('') : chatHelloHtml();
+  chatUsage();
+  if (atEnd) log.scrollTop = log.scrollHeight;
+}
+// While a reply streams, only its own text is redrawn, once a frame.
+function chatLive() {
+  if (chatFrame) return;
+  chatFrame = requestAnimationFrame(() => {
+    chatFrame = 0;
+    const live = chat.items.find(x => x.live), node = $('#ch-live .ch-b');
+    if (!live || !node) return chatRender();
+    const log = $('#ch-log'), atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    node.innerHTML = chatGrokBody(live);
+    if (atEnd) log.scrollTop = log.scrollHeight;
+  });
+}
+function chatUsage() {
+  const usd = chat.ticks / USD_TICKS;
+  $('#ch-use').textContent = chat.tokens ? `${(chat.tokens / 1000).toFixed(1)}k tokens · $${usd.toFixed(usd < 0.1 ? 3 : 2)}` : '';
+}
+function chatRenderRail() {
+  const day = d => {
+    const today = new Date().setHours(0, 0, 0, 0), n = Math.round((today - new Date(d).setHours(0, 0, 0, 0)) / 864e5);
+    return n === 0 ? 'today' : n === 1 ? 'yesterday' : `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  };
+  let group = '', html = '';
+  for (const f of chatFiles) {
+    const g = day(f.date);
+    if (g !== group) html += `<div class="ch-grp">${(group = g)}</div>`;
+    html += `<a class="ch-item${f.file === chat?.file ? ' on' : ''}" href="#chat" data-chat="${esc(f.file)}">${esc(f.title)}<small>${f.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small></a>`;
+  }
+  $('#ch-list').innerHTML = html || '<p class="ch-empty">No saved chats yet.</p>';
+}
+const chatButtons = () => { $('#ch-send').innerHTML = chatRunning ? 'stop &#9632;' : 'send &#8629;'; };
+function chatGrow() {
+  const t = $('#ch-msg');
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, 160) + 'px';
+}
+function chatCopy(text) {
+  const fallback = () => {
+    const t = document.createElement('textarea');
+    t.value = text;
+    t.style.cssText = 'position:fixed;opacity:0';
+    document.body.append(t);
+    t.select();
+    try { document.execCommand('copy') ? toast('Copied.') : toast('Could not copy.', true); } catch { toast('Could not copy.', true); }
+    t.remove();
+  };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(() => toast('Copied.'), fallback);
+  else fallback(); // The portal is plain http, where the clipboard API isn't offered.
+}
+
+// ── Saved chats ──
+async function chatLoadFiles() {
+  let text = '';
+  try { text = await api('/listfiles?folder=' + encodeURIComponent(CHAT_DIR)); } catch {}
+  chatFiles = [];
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('Fi:')) continue;
+    const file = line.slice(3, line.lastIndexOf(':')), m = file.match(CHAT_FILE);
+    if (m) chatFiles.push({ file, title: m[6], date: new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]) });
+  }
+  chatFiles.sort((a, b) => b.file.localeCompare(a.file));
+  chatRenderRail();
+}
+const chatStamp = t => { const d = new Date(t), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; };
+// The chat's first message, cut at a word to about 40 characters, as a file name.
+function chatTitle() {
+  let t = (chat.items.find(x => x.k === 'you')?.text || 'chat').replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (t.length > 40) { t = t.slice(0, 41); const space = t.lastIndexOf(' '); t = space > 10 ? t.slice(0, space) : t.slice(0, 40); }
+  return t.replace(/[. ]+$/, '') || 'chat';
+}
+// Saves one at a time; an upload replaces the chat's file.
+function chatSave() {
+  if (!chat.items.length) return chatSaving;
+  if (!chat.file) chat.file = `${chatStamp(chat.created)} ${chatTitle()}.json`;
+  const c = chat, name = c.file;
+  chatSaving = chatSaving.then(async () => {
+    const { file, ...data } = c;
+    data.items = c.items.filter(x => !x.live && !(x.k === 'ask' && !x.verdict));
+    await upload('/', { folder: CHAT_DIR, file: [new Blob([JSON.stringify(data)], { type: 'application/json' }), name] }, () => {});
+    if (!chatFiles.some(f => f.file === name)) await chatLoadFiles();
+  }).catch(e => toast('The chat could not be saved to the SD card: ' + e.message, true));
+  return chatSaving;
+}
+async function chatOpenFile(file) {
+  if (chatRunning) return toast('Wait for Grok to finish, or stop it.', true);
+  try {
+    const data = JSON.parse(await api(`/file?name=${encodeURIComponent(CHAT_DIR + '/' + file)}&action=download`));
+    chat = { ...newChat(), ...data, file };
+    chatLoadModels();
+    chatRender(true);
+    chatRenderRail();
+  } catch (e) { fail(e); }
+}
+async function chatLoadModels() {
+  let list = chatModels;
+  if (!list) {
+    try {
+      list = JSON.parse(await api('/chatmodels')).data.map(m => m.id).filter(id => /^grok-/.test(id) && !/imagine|voice|tts|stt/.test(id)).sort().reverse();
+      if (list.length) chatModels = list;
+    } catch {}
+    if (!list?.length) list = [CHAT_MODEL];
+  }
+  if (!list.includes(chat.model)) chat.model = list.includes(CHAT_MODEL) ? CHAT_MODEL : list[0];
+  $('#ch-model').innerHTML = list.map(m => `<option${m === chat.model ? ' selected' : ''}>${esc(m)}</option>`).join('');
+}
+function chatShow() {
+  if (!chat) chat = newChat();
+  chatRender(true);
+  chatLoadFiles();
+  chatLoadModels();
+  getJson('/settings').then(s => { chatGrok = s.grok || {}; $('#ch-who').textContent = chatGrok.name || 'Grok'; if (!chatRunning) chatRender(); }).catch(() => {});
+  if (!matchMedia('(hover: none)').matches) $('#ch-msg').focus();
+}
+
+// ── Talking to Grok ──
+function chatErrorText(t) {
+  try { const j = JSON.parse(t), e = j.error; return (typeof e === 'string' ? e : e?.message) || j.message || j.code || t; } catch { return t || 'xAI refused the request.'; }
+}
+// One request to xAI, its reply streaming in. Returns the finished response.
+async function chatRound(input) {
+  // xAI keeps a chat's instructions from its first request, and refuses them again alongside
+  // previous_response_id.
+  const body = { model: chat.model, stream: true, input, tools: chatTools() };
+  if (chat.last) body.previous_response_id = chat.last;
+  else body.instructions = chatInstructions();
+  const live = { k: 'grok', text: '', live: true }, searches = {};
+  chat.items.push(live);
+  chatRender(true);
+  const ctl = new AbortController();
+  chatStop = ctl;
+  busy++; // the device answers one request at a time, so the status poll waits
+  let done = null;
+  try {
+    let r;
+    try { r = await fetch('/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctl.signal }); }
+    catch (e) { if (e.name === 'AbortError') throw e; throw new Error(`The ${dev} did not answer.`); }
+    if (r.status === 401) { location.reload(); throw new Error('Logged out.'); }
+    if (!r.ok) throw new ChatError(r.status, chatErrorText(await r.text()));
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done: end } = await reader.read();
+      if (end) break;
+      buf += dec.decode(value, { stream: true });
+      for (let nl; (nl = buf.indexOf('\n')) >= 0;) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(5)); } catch { continue; }
+        const item = ev.item || {};
+        if (ev.type === 'response.output_text.delta') {
+          live.text += ev.delta || '';
+          chatLive();
+        } else if (ev.type === 'response.output_item.added' && item.type === 'web_search_call') {
+          searches[item.id] = { k: 'tool', name: 'web search', result: 'searching', state: 'wait' };
+          chat.items.splice(chat.items.indexOf(live), 0, searches[item.id]);
+          chatRender();
+        } else if (ev.type === 'response.output_item.done' && searches[item.id]) {
+          Object.assign(searches[item.id], { result: item.action?.query || item.action?.url || 'done', state: '' });
+          chatRender();
+        } else if (ev.type === 'response.completed' || ev.type === 'response.incomplete') {
+          done = ev.response;
+        } else if (ev.type === 'response.failed' || ev.type === 'error') {
+          throw new Error(ev.response?.error?.message || ev.error?.message || ev.message || 'xAI stopped the reply.');
+        }
+      }
+    }
+  } finally {
+    busy--;
+    chatStop = null;
+    delete live.live;
+    if (!live.text) chat.items.splice(chat.items.indexOf(live), 1);
+    chatRender();
+  }
+  if (!done) throw new Error('The reply stopped before it finished.');
+  chat.last = done.id;
+  chat.tokens += done.usage?.total_tokens || 0;
+  chat.ticks += done.usage?.cost_in_usd_ticks || 0;
+  if (done.status === 'incomplete') chat.items.push({ k: 'note', text: `The reply was cut short (${done.incomplete_details?.reason || 'it ran out of room'}).` });
+  chatUsage();
+  return done;
+}
+// Runs one skill Grok asked for, asking first if it changes anything.
+async function chatSkill(call) {
+  const sk = SKILLS[call.name];
+  if (!sk) return { result: { error: 'There is no such skill.' } };
+  let args;
+  try { args = JSON.parse(call.arguments || '{}') || {}; } catch { return { result: { error: 'The arguments were not valid JSON.' } }; }
+  let x = {};
+  if (sk.level !== 'read') {
+    const it = { k: 'ask', name: call.name, what: sk.what?.(args) || '', note: sk.note?.(args) || '' };
+    if (sk.level === 'ask' && !sk.secret && prefs.get('always', []).includes(call.name)) it.verdict = 'allowed: you always allow this';
+    chat.items.push(it);
+    if (!it.verdict) {
+      it.args = args; // for the ask's own field; not saved
+      chatRender(true);
+      x = await new Promise(resolve => { chatPending = { resolve, sk }; });
+      chatPending = null;
+      delete it.args;
+      it.verdict = x.ok ? 'you allowed it' : 'you denied it';
+      if (x.ok && x.always) prefs.set('always', [...new Set([...prefs.get('always', []), call.name])]);
+      if (!x.ok) { chatRender(); return { result: { denied: true, note: "The user denied this. Don't try it again unless they ask." } }; }
+    }
+  }
+  const line = { k: 'tool', name: call.name, result: '', state: 'wait' };
+  chat.items.push(line);
+  chatRender(true);
+  try {
+    const out = (await sk.run(args, x)) || {};
+    Object.assign(line, { result: out.summary || 'done', state: '' });
+    return { result: out.data ?? { ok: true, result: out.summary || 'done' }, then: out.then };
+  } catch (e) {
+    Object.assign(line, { result: e.message, state: 'bad' });
+    return { result: { error: e.message } };
+  } finally {
+    chatRender();
+  }
+}
+const chatTranscript = () => chat.items.filter(x => (x.k === 'you' || x.k === 'grok') && x.text).map(x => ({ role: x.k === 'you' ? 'user' : 'assistant', content: x.text }));
+// A message, and the rounds of skills it leads to.
+async function chatSend(text) {
+  if (chatRunning) return;
+  chatRunning = true;
+  chatButtons();
+  chat.items.push({ k: 'you', text });
+  chatSave();
+  // Skill requests left unanswered (the reply was stopped) are answered first, as xAI expects.
+  let input = [...(chat.pending || []).map(id => ({ type: 'function_call_output', call_id: id, output: '{"stopped":"The user stopped this before it ran."}' })), { role: 'user', content: text }];
+  chat.pending = null;
+  try {
+    for (let round = 1; ; round++) {
+      let done;
+      try {
+        done = await chatRound(input);
+      } catch (e) {
+        // xAI keeps a chat for 30 days; after that it is sent again in full.
+        if (!(e instanceof ChatError) || !chat.last || !input.some(i => i.role === 'user') || !/previous|not found|expired/i.test(e.message)) throw e;
+        chat.last = null;
+        chat.items.push({ k: 'note', text: 'xAI had forgotten this chat, so it was sent again in full.' });
+        done = await chatRound(chatTranscript());
+      }
+      const calls = (done.output || []).filter(o => o.type === 'function_call');
+      chat.pending = calls.length ? calls.map(c => c.call_id) : null;
+      chatSave();
+      if (!calls.length) break;
+      if (round >= CHAT_ROUNDS) { chat.items.push({ k: 'note', text: `Stopped after ${CHAT_ROUNDS} rounds of skills for one message.` }); break; }
+      input = [];
+      let then = null;
+      for (const call of calls) {
+        const r = await chatSkill(call);
+        input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(r.result) });
+        then = r.then || then;
+      }
+      if (then) {
+        // It takes the device and this page offline: Grok answers first, then it happens.
+        try { await chatRound(input); chat.pending = null; } catch {}
+        await chatSave();
+        await then();
+        return;
+      }
+    }
+  } catch (e) {
+    chat.items.push(e.name === 'AbortError' ? { k: 'note', text: 'stopped' } : { k: 'error', text: e.message });
+    chatSave();
+  } finally {
+    chatRunning = false;
+    chatPending = null;
+    chatButtons();
+    chatRender();
+  }
+}
+
+$('#ch-box').addEventListener('submit', e => {
+  e.preventDefault();
+  if (chatRunning) { chatPending?.resolve({ ok: false }); chatStop?.abort(); return; }
+  const t = $('#ch-msg'), text = t.value.trim();
+  if (!text) return;
+  t.value = '';
+  chatGrow();
+  chatSend(text);
+});
+$('#ch-msg').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!chatRunning) $('#ch-box').requestSubmit(); }
+});
+$('#ch-msg').addEventListener('input', chatGrow);
+$('#ch-inner').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.hello) { $('#ch-msg').value = b.dataset.hello; chatGrow(); $('#ch-msg').focus(); return; }
+  if (b.dataset.copy) return chatCopy(chat.items[+b.dataset.copy]?.text || '');
+  if (!chatPending) return;
+  if (b.id === 'ch-allow') chatPending.resolve({ ok: true, always: !!$('#ch-always')?.checked, secret: $('#ch-secret')?.value || '' });
+  else if (b.id === 'ch-deny') chatPending.resolve({ ok: false });
+});
+$('#ch-inner').addEventListener('input', e => {
+  if (e.target.id === 'ch-typed' && chatPending) $('#ch-allow').disabled = e.target.value.trim().toLowerCase() !== chatPending.sk.word;
+});
+$('#ch-new').addEventListener('click', () => {
+  if (chatRunning) return toast('Wait for Grok to finish, or stop it.', true);
+  chat = newChat();
+  chatRender(true);
+  chatRenderRail();
+  $('#ch-rail').classList.remove('open');
+  $('#ch-msg').focus();
+});
+$('#ch-list').addEventListener('click', e => {
+  const a = e.target.closest('[data-chat]');
+  if (!a) return;
+  e.preventDefault();
+  $('#ch-rail').classList.remove('open');
+  chatOpenFile(a.dataset.chat);
+});
+$('#ch-model').addEventListener('change', e => { chat.model = e.target.value; if (chat.items.length) chatSave(); });
+for (const [id, key] of [['#ch-skills', 'skills'], ['#ch-web', 'web']]) {
+  const b = $(id);
+  b.setAttribute('aria-pressed', String(prefs.get(key, true)));
+  b.addEventListener('click', () => { const on = b.getAttribute('aria-pressed') !== 'true'; b.setAttribute('aria-pressed', String(on)); prefs.set(key, on); });
+}
+$('#ch-chats').addEventListener('click', () => {
+  const open = $('#ch-rail').classList.toggle('open');
+  $('#ch-chats').setAttribute('aria-expanded', String(open));
+});
 
 tick();
 setInterval(tick, 10000);
