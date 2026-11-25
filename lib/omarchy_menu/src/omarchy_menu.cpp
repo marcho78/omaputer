@@ -23,6 +23,8 @@ constexpr float kSmall = 48, kBig = 72, kGap = 12;
 constexpr float kStep = kSmall + kGap;
 constexpr float kIconShare = 0.72f;            // Icon size as a share of its tile.
 constexpr int kLabelY = 92, kDescY = 111, kDotsY = 131; // Tops of the text lines; the dots' centre.
+// A tile's rows, with the one-pixel edge of its anti-aliasing, stay within those the header promises.
+static_assert(kRowY - kBig / 2 - 1 >= kStatusHeight && kRowY + kBig / 2 + 1 < kTilesBottom, "tiles outside their rows");
 
 struct Rgb {
     int r, g, b;
@@ -60,6 +62,9 @@ struct Canvas {
         p = a >= 1 ? pack(c) : pack(mix(unpack(p), c, a));
     }
     void fill(Rgb c) { std::fill(px, px + kWidth * h, pack(c)); }
+    // A range of rows clipped to the ones the canvas holds, so shapes skip the rest.
+    int first(int y) const { return std::max(y, top); }
+    int last(int y) const { return std::min(y, top + h - 1); }
 };
 
 // ---------- signed distances (negative inside) ----------
@@ -308,14 +313,14 @@ void drawCentred(Canvas &cv, const Font &f, int y, const char *s, Rgb colour, in
 void fillRoundRect(Canvas &cv, float cx, float cy, float w, float h, float r, Rgb colour) {
     const int x0 = static_cast<int>(std::floor(cx - w / 2)) - 1, x1 = static_cast<int>(std::ceil(cx + w / 2)) + 1;
     const int y0 = static_cast<int>(std::floor(cy - h / 2)) - 1, y1 = static_cast<int>(std::ceil(cy + h / 2)) + 1;
-    for (int y = y0; y <= y1; ++y) {
+    for (int y = cv.first(y0); y <= cv.last(y1); ++y) {
         for (int x = x0; x <= x1; ++x) cv.blend(x, y, colour, cover(sdRoundBox(x + 0.5f, y + 0.5f, cx, cy, w / 2, h / 2, r)));
     }
 }
 
 void strokeRoundRect(Canvas &cv, float x0, float y0, float x1, float y1, float r, float w, Rgb colour) {
     const float cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, hw = (x1 - x0) / 2, hh = (y1 - y0) / 2;
-    for (int y = static_cast<int>(y0) - 1; y <= static_cast<int>(y1) + 1; ++y) {
+    for (int y = cv.first(static_cast<int>(y0) - 1); y <= cv.last(static_cast<int>(y1) + 1); ++y) {
         for (int x = static_cast<int>(x0) - 1; x <= static_cast<int>(x1) + 1; ++x) {
             cv.blend(x, y, colour, cover(std::fabs(sdRoundBox(x + 0.5f, y + 0.5f, cx, cy, hw, hh, r)) - w / 2));
         }
@@ -323,7 +328,7 @@ void strokeRoundRect(Canvas &cv, float x0, float y0, float x1, float y1, float r
 }
 
 void strokeArc(Canvas &cv, float cx, float cy, float r, float start, float end, float w, Rgb colour) {
-    for (int y = static_cast<int>(cy - r - w); y <= static_cast<int>(cy + r + w); ++y) {
+    for (int y = cv.first(static_cast<int>(cy - r - w)); y <= cv.last(static_cast<int>(cy + r + w)); ++y) {
         for (int x = static_cast<int>(cx - r - w); x <= static_cast<int>(cx + r + w); ++x) {
             cv.blend(x, y, colour, cover(sdArc(x + 0.5f, y + 0.5f, cx, cy, r, start, end) - w / 2));
         }
@@ -331,7 +336,7 @@ void strokeArc(Canvas &cv, float cx, float cy, float r, float start, float end, 
 }
 
 void fillDisc(Canvas &cv, float cx, float cy, float r, Rgb colour) {
-    for (int y = static_cast<int>(cy - r) - 1; y <= static_cast<int>(cy + r) + 1; ++y) {
+    for (int y = cv.first(static_cast<int>(cy - r) - 1); y <= cv.last(static_cast<int>(cy + r) + 1); ++y) {
         for (int x = static_cast<int>(cx - r) - 1; x <= static_cast<int>(cx + r) + 1; ++x) {
             cv.blend(x, y, colour, cover(std::hypot(x + 0.5f - cx, y + 0.5f - cy) - r));
         }
@@ -367,16 +372,24 @@ void drawStatusBar(Canvas &cv, const Status &s) {
 } // namespace
 
 bool Renderer::begin() {
-    if (masks_) return true;
-    masks_ = new (std::nothrow) uint8_t[kIcons * kMaskSize * kMaskSize];
-    if (!masks_) return false;
-    for (int i = 0; i < kIcons; ++i) paintIcon(static_cast<Icon>(i), masks_ + i * kMaskSize * kMaskSize);
+    if (ready()) return true;
+    for (int i = 0; i < kIcons; ++i) {
+        if (static_cast<Icon>(i) == Icon::Grok) continue; // Drawn live.
+        masks_[i] = new (std::nothrow) uint8_t[kMaskSize * kMaskSize];
+        if (!masks_[i]) {
+            end();
+            return false;
+        }
+        paintIcon(static_cast<Icon>(i), masks_[i]);
+    }
     return true;
 }
 
 void Renderer::end() {
-    delete[] masks_;
-    masks_ = nullptr;
+    for (uint8_t *&mask : masks_) {
+        delete[] mask;
+        mask = nullptr;
+    }
 }
 
 void Renderer::drawStatus(uint16_t *strip, const Status &status) const {
@@ -385,12 +398,13 @@ void Renderer::drawStatus(uint16_t *strip, const Status &status) const {
     drawStatusBar(cv, status);
 }
 
-void Renderer::draw(uint16_t *frame, const Tile *tiles, int count, float position, const Status &status) const {
-    Canvas cv{frame, kHeight, 0};
+void Renderer::draw(uint16_t *band, int top, int rows, const Tile *tiles, int count, float position,
+                    const Status &status) const {
+    Canvas cv{band, rows, top};
     const Rgb bg = rgb(kBg);
     cv.fill(bg);
     drawStatusBar(cv, status);
-    if (count <= 0 || !masks_) return;
+    if (count <= 0 || !ready()) return;
 
     for (int i = 0; i < count; ++i) {
         const float off = i - position;
@@ -410,12 +424,14 @@ void Renderer::draw(uint16_t *frame, const Tile *tiles, int count, float positio
         if (t.icon == Icon::Grok) {
             // Grok's own face: a black ball with two slanted eyes.
             constexpr int kFaceMax = 56; // Covers the big tile's icon (72 * 0.72, rounded up).
+            const int faceSize = std::min(isize, kFaceMax);
+            if (iy0 + faceSize <= cv.top || iy0 >= cv.top + cv.h) continue; // Not in this band.
             static uint16_t face[kFaceMax * kFaceMax];
             grokface::Style st;
             st.region_x = ix0;
             st.region_y = iy0;
-            st.region_w = std::min(isize, kFaceMax);
-            st.region_h = std::min(isize, kFaceMax);
+            st.region_w = faceSize;
+            st.region_h = faceSize;
             st.centre_x = cx;
             st.centre_y = kRowY + icon / 64;
             st.radius = icon * 22 / 64;
@@ -425,15 +441,15 @@ void Renderer::draw(uint16_t *frame, const Tile *tiles, int count, float positio
             const Rgb eyes = mix(ball, rgb(0xFFFFFF), 0.92f);
             st.eyes = (static_cast<uint32_t>(eyes.r) << 16) | (eyes.g << 8) | eyes.b;
             grokface::render(face, st, grokface::Pose{});
-            for (int y = 0; y < st.region_h; ++y) {
+            for (int y = cv.first(iy0) - iy0; y <= cv.last(iy0 + st.region_h - 1) - iy0; ++y) {
                 for (int x = 0; x < st.region_w; ++x) cv.blend(ix0 + x, iy0 + y, unpack(face[y * st.region_w + x]), 1);
             }
             continue;
         }
-        const uint8_t *mask = masks_ + static_cast<int>(t.icon) * kMaskSize * kMaskSize;
+        const uint8_t *mask = masks_[static_cast<int>(t.icon)];
         const Rgb ink = mix(fill, rgb(0xFFFFFF), t.active ? 1.0f : 0.5f);
         const float scale = kMaskSize / icon;
-        for (int y = iy0; y < iy0 + isize; ++y) {
+        for (int y = cv.first(iy0); y <= cv.last(iy0 + isize - 1); ++y) {
             for (int x = ix0; x < ix0 + isize; ++x) {
                 // Bilinear sample of the mask at this pixel's centre.
                 const float u = ((x + 0.5f) - (cx - icon / 2)) * scale - 0.5f;

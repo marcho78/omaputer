@@ -16,6 +16,12 @@
 
 namespace {
 
+// The screen is drawn a band of rows at a time: a whole frame (65 KB) doesn't fit in memory
+// next to WiFi, which after a Grok session can leave no free block over about 21 KB. Bands
+// are as tall as the biggest buffer that can be had (40 rows is 19.2 KB), so a sliding tile
+// is cut into as few pieces as possible.
+constexpr int kBandRowChoices[] = {40, 20, 10};
+
 omenu::Renderer renderer;
 int lastIndex = -1;
 int lastCount = -1;
@@ -63,6 +69,24 @@ omenu::Status currentStatus(String &time) {
     return {"omarchy", battery > 0 ? battery : -1, isCharging(), launcherWifiIsConnected(), time.c_str()};
 }
 
+// The screen in bands of at most maxRows, cut where the layout changes (status bar, tiles,
+// text) and then into equal parts.
+void drawScreen(
+    uint16_t *band, int maxRows, const std::vector<omenu::Tile> &tiles, float position, const omenu::Status &status
+) {
+    const int edges[] = {0, omenu::kStatusHeight, omenu::kTilesBottom, omenu::kHeight};
+    for (int e = 0; e + 1 < 4; ++e) {
+        const int span = edges[e + 1] - edges[e];
+        const int parts = (span + maxRows - 1) / maxRows;
+        for (int p = 0; p < parts; ++p) {
+            const int top = edges[e] + span * p / parts;
+            const int rows = edges[e] + span * (p + 1) / parts - top;
+            renderer.draw(band, top, rows, tiles.data(), static_cast<int>(tiles.size()), position, status);
+            omarchy::pushFrame(band, 0, top, omenu::kWidth, rows);
+        }
+    }
+}
+
 void remember(const omenu::Status &s, const String &time) {
     shownBattery = s.battery;
     shownCharging = s.charging;
@@ -75,9 +99,24 @@ void remember(const omenu::Status &s, const String &time) {
 bool omarchyTileMenuDraw(std::vector<MenuOptions> &opt, int index, bool fullRedraw) {
     const int count = static_cast<int>(opt.size());
     shown = false;
-    if (count < 1 || tftWidth != omenu::kWidth || tftHeight != omenu::kHeight || !renderer.begin()) return false;
-    std::unique_ptr<uint16_t[]> frame(new (std::nothrow) uint16_t[omenu::kWidth * omenu::kHeight]); // 65 KB.
-    if (!frame) return false;
+    if (count < 1 || tftWidth != omenu::kWidth || tftHeight != omenu::kHeight) return false;
+    if (!renderer.begin()) {
+        launcherConsolePrintln("Tile menu: not enough memory for its icons, showing the list menu");
+        return false;
+    }
+    std::unique_ptr<uint16_t[]> band;
+    int bandRows = 0;
+    for (int rows : kBandRowChoices) {
+        band.reset(new (std::nothrow) uint16_t[omenu::kWidth * rows]);
+        if (band) {
+            bandRows = rows;
+            break;
+        }
+    }
+    if (!band) {
+        launcherConsolePrintln("Tile menu: not enough memory to draw, showing the list menu");
+        return false;
+    }
 
     std::vector<omenu::Tile> tiles;
     tiles.reserve(count);
@@ -94,13 +133,11 @@ bool omarchyTileMenuDraw(std::vector<MenuOptions> &opt, int index, bool fullRedr
         for (;;) {
             const float t = static_cast<float>(launcherMillis() - start) / omenu::kSlideMs;
             if (t >= 1 || AnyKeyPress) break; // Another key: finish at once so it moves on.
-            renderer.draw(frame.get(), tiles.data(), count, from + (to - from) * omenu::spring(t), status);
-            omarchy::pushFrame(frame.get(), 0, 0, omenu::kWidth, omenu::kHeight);
+            drawScreen(band.get(), bandRows, tiles, from + (to - from) * omenu::spring(t), status);
             launcherDelayMs(1);
         }
     }
-    renderer.draw(frame.get(), tiles.data(), count, static_cast<float>(index), status);
-    omarchy::pushFrame(frame.get(), 0, 0, omenu::kWidth, omenu::kHeight);
+    drawScreen(band.get(), bandRows, tiles, static_cast<float>(index), status);
     remember(status, time);
     lastIndex = index;
     lastCount = count;

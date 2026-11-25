@@ -12,6 +12,7 @@ namespace omenu {
 constexpr int kWidth = 240;
 constexpr int kHeight = 135;
 constexpr int kStatusHeight = 19;  // Rows the status bar covers.
+constexpr int kTilesBottom = 95;   // The tiles are drawn on rows kStatusHeight .. kTilesBottom - 1.
 constexpr uint32_t kSlideMs = 380; // How long a slide to the next tile takes.
 
 enum class Icon : uint8_t { Sd, Install, Web, Usb, Partitions, Settings, Grok, Screensaver, Power, App, Count };
@@ -36,19 +37,29 @@ struct Status {
 class Renderer {
 public:
     ~Renderer() { end(); }
-    bool begin(); // Draws the icon shapes once, into about 16 KB. False when out of memory.
-    void end();   // Frees them.
-    bool ready() const { return masks_ != nullptr; }
+    // Draws the icon shapes once, into 24 KB: a small block per icon, so it works with memory in
+    // pieces. False when out of memory.
+    bool begin();
+    void end(); // Frees them.
+    bool ready() const { return masks_[0] != nullptr; }
 
     // The whole screen into kWidth * kHeight pixels. position is the selected tile's index,
     // fractional while sliding from one tile to the next.
-    void draw(uint16_t *frame, const Tile *tiles, int count, float position, const Status &status) const;
+    void draw(uint16_t *frame, const Tile *tiles, int count, float position, const Status &status) const {
+        draw(frame, 0, kHeight, tiles, count, position, status);
+    }
+
+    // Only screen rows top .. top + rows - 1 of the same picture, into kWidth * rows pixels.
+    // The device draws the screen a band at a time: a whole frame (65 KB) doesn't fit in
+    // memory next to WiFi.
+    void draw(uint16_t *band, int top, int rows, const Tile *tiles, int count, float position,
+              const Status &status) const;
 
     // Only the status bar, into kWidth * kStatusHeight pixels.
     void drawStatus(uint16_t *strip, const Status &status) const;
 
 private:
-    uint8_t *masks_ = nullptr; // One coverage map per icon.
+    uint8_t *masks_[static_cast<int>(Icon::Count)] = {}; // One coverage map per icon; none for Grok's live face.
 };
 
 // Easing for a slide: 0..1 to 0..1 with a slight overshoot, like a spring settling.
